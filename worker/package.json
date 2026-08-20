@@ -1,0 +1,22 @@
+{
+  "name": "golsfintech-worker",
+  "version": "0.1.0",
+  "description": "Worker asincrono de GolsFintech (OCR y notificaciones) sobre BullMQ",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "bullmq": "^6.1.2",
+    "dotenv": "^17.4.2",
+    "ioredis": "^6.0.0"
+  }
+}

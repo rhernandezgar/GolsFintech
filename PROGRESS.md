@@ -5,6 +5,59 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-20 22:16] T1 — Scaffold de backend, frontend y worker
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit con prefijo `T1:`)
+**Contexto:** Primera tarea del plan. Levantar los tres proyectos con las versiones del
+diseno, crear la estructura de carpetas hexagonal exigida, un `.gitignore` que impida que
+entren secretos o dependencias al repositorio, y dejar la API respondiendo en el puerto
+6060 sin tocar configuracion global del servidor.
+**Cambios:**
+- `backend/` — Laravel 13 (framework 13.26.1) via `composer create-project`. Se crearon
+  `app/Domain/{Prospect,Credit,Identity,Audit,Port}`, `app/Application`,
+  `app/Infrastructure/{Persistence,Http,Queue}` y `app/Http/{Controllers,Middleware,Requests}`
+  con `.gitkeep`. Se elimino `database/database.sqlite` generado por el instalador.
+- `backend/.env` y `.env.example` — `APP_NAME=GolsFintech`, `APP_URL=http://127.0.0.1:6060`,
+  `DB_CONNECTION=mysql` (base `golsfintech`, aun sin crear: es T2) y
+  `SESSION_DRIVER/CACHE_STORE/QUEUE_CONNECTION=redis`, conforme al stack de la Fase 1 §5.2.
+- `frontend/` — Vue 3 + Vite (`npm create vite --template vue`) con `vue-router@4`, `pinia`
+  y `axios`. Subcarpetas `src/{views,components,composables,router,stores}` con `.gitkeep`.
+- `worker/` — Node 24 LTS, `type: module`, con `bullmq`, `ioredis` y `dotenv`. Estructura
+  `src/{queues,processors,adapters}` y `src/index.js` como punto de entrada (todavia sin
+  colas registradas: eso es T7). `.env.example` con las claves del worker.
+- `.gitignore` en la raiz: ignora `docs/`, `.env` y variantes (excepto `.env.example`),
+  `vendor/`, `node_modules/`, `dist/`, llaves (`*.pem`, `*.key`, `*.p12`), `auth.json`,
+  `storage/` de Laravel y artefactos de editor.
+- `README.md` en la raiz con arquitectura, versiones verificadas y puesta en marcha.
+**Verificacion:**
+- `curl -I http://127.0.0.1:6060` -> `HTTP/1.1 200 OK` (`X-Powered-By: PHP/8.4.24`),
+  servido por `php artisan serve --host=127.0.0.1 --port=6060`.
+- `php artisan --version` -> `Laravel Framework 13.26.1`.
+- `node -v` -> `v24.19.0`; `node worker/src/index.js` arranca e imprime la configuracion.
+- `php artisan test` -> 2 pruebas, 2 aprobadas, 2 aserciones.
+- `npm run build` en `frontend/` -> compilacion correcta en 202 ms.
+- `git diff --cached --name-only | grep -cE "node_modules|/vendor/"` -> `0`; el unico
+  archivo `.env*` en el stage es `.env.example` (backend y worker).
+**Siguiente paso pendiente:** T2 — Migraciones. Falta (a) crear la base `golsfintech` y
+un usuario MySQL de minimo privilegio (requiere consultar credenciales con el usuario, ya
+que no hay acceso root confirmado), (b) escribir las 9 migraciones en
+`backend/database/migrations/` con los nombres exactos de la seccion 3 del encargo
+(`prospects`, `identity_documents`, `identity_validations`, `credit_applications`,
+`credit_simulations`, `customers`, `credit_lines`, `cards`, `audit_logs` con referencia
+polimorfica `prospect_id` + `affected_entity` + `affected_entity_id`), y (c) comprobar con
+`php artisan migrate:status`.
+**Notas:**
+- Decisiones confirmadas por el usuario: se trabaja con **PHP 8.4.24** (el diseno menciona
+  8.5; Laravel 13 requiere `^8.3`) y `docs/` **no** se versiona.
+- No hay Nginx instalado; la API se publica con `php artisan serve`, que es un proceso del
+  proyecto y no altera configuracion global. Si mas adelante se requiere Nginx o PHP-FPM,
+  se consultara antes.
+- El instalador de Laravel dejo `SESSION_DRIVER=database` con SQLite por defecto y la
+  extension `pdo_sqlite` no esta instalada en este servidor; se cambio a Redis, que si
+  esta disponible y ademas es lo que indica el diseno.
+
+---
+
 ## [2026-08-20 22:02] T0 — Archivos de control del proyecto
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit "T0: archivos de control...")

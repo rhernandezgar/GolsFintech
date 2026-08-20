@@ -1,0 +1,56 @@
+# ---- Documentos de diseño (Fases 1-3): fuera del control de versiones ----
+docs/
+
+# ---- Secretos: nunca en el repositorio ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+secrets/
+
+# ---- Dependencias ----
+/backend/vendor/
+node_modules/
+
+# ---- Backend (Laravel) ----
+/backend/storage/*.key
+/backend/storage/framework/cache/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/testing/*
+/backend/storage/framework/views/*
+/backend/storage/logs/*
+/backend/bootstrap/cache/*
+/backend/public/build/
+/backend/public/hot
+/backend/public/storage
+/backend/.phpunit.result.cache
+/backend/.phpunit.cache/
+/backend/database/*.sqlite
+/backend/database/*.sqlite-journal
+/backend/Homestead.json
+/backend/Homestead.yaml
+
+# ---- Frontend / worker (Node) ----
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+coverage/
+
+# ---- Editor / sistema operativo ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---- Artefactos temporales del proyecto ----
+/tmp/
+*.log
