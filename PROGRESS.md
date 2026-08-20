@@ -5,6 +5,50 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-20 22:26] T2 — Migraciones de las 9 tablas
+**Estado:** en progreso (bloqueado por credenciales de MySQL)
+**Commit:** ver `git log --oneline` (commit `T2 (en progreso): ...`)
+**Contexto:** Crear las nueve tablas del diseno con los nombres exactos acordados,
+incluida `audit_logs` con referencia polimorfica (`prospect_id` + `affected_entity` +
+`affected_entity_id`) en lugar de una llave foranea por entidad.
+**Cambios:**
+- 9 migraciones nuevas en `backend/database/migrations/`:
+  `2026_08_20_221000_create_prospects_table.php`,
+  `..._221100_create_identity_documents_table.php`,
+  `..._221200_create_identity_validations_table.php`,
+  `..._221300_create_credit_applications_table.php`,
+  `..._221400_create_credit_simulations_table.php`,
+  `..._221500_create_customers_table.php`,
+  `..._221600_create_credit_lines_table.php`,
+  `..._221700_create_cards_table.php`,
+  `..._221800_create_audit_logs_table.php`.
+- `backend/tests/Feature/DatabaseSchemaTest.php`: comprueba que existan las nueve tablas,
+  que las columnas clave usen los nombres acordados y que `audit_logs` NO tenga una
+  columna `*_id` por entidad (la referencia debe ser polimorfica).
+- `backend/phpunit.xml`: la suite de pruebas apunta a MySQL sobre la base
+  `golsfintech_test` (antes SQLite en memoria; la extension `pdo_sqlite` no esta
+  instalada en este servidor).
+**Decisiones de esquema tomadas:**
+- `curp` y `rfc` son TEXT porque se guardaran cifrados a nivel de columna; se acompanan
+  de `curp_hash` / `rfc_hash` (SHA-256) para buscar y detectar duplicados sin descifrar.
+- `cards` guarda `tokenized_card_number` y `last_four`; el PAN completo no tiene columna.
+- `audit_logs` no lleva `timestamps()` de Eloquent: el registro es inmutable y su unica
+  marca temporal es `event_at`, que forma parte del material del hash.
+- Cada tabla lleva un `public_id` UUID para exponerse en la API sin filtrar identificadores
+  secuenciales.
+**Verificacion:** `php -l` sin errores de sintaxis en las nueve migraciones.
+`php artisan migrate:status` **falla todavia**: `SQLSTATE[HY000] [1045] Access denied for
+user 'golsfintech'@'localhost'`. La base y el usuario aun no existen.
+**Siguiente paso pendiente:** el usuario debe crear en MySQL las bases `golsfintech` y
+`golsfintech_test` con el usuario `golsfintech`@`127.0.0.1` de minimo privilegio, y poner
+la contrasena en `backend/DB_PASSWORD` del archivo `backend/.env`. Hecho eso, ejecutar
+`php artisan migrate` y `php artisan migrate:status` (deben listarse las 12 migraciones:
+las 3 de Laravel mas las 9 del diseno) y `php artisan test --filter=DatabaseSchemaTest`.
+**Notas:** No se ejecuto ningun comando contra MySQL: el usuario decidio crear la base y
+el usuario el mismo, para que la credencial no pase por esta conversacion.
+
+---
+
 ## [2026-08-20 22:16] T1 — Scaffold de backend, frontend y worker
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit con prefijo `T1:`)
