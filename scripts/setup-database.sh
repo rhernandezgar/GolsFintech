@@ -9,6 +9,8 @@
 
 set -euo pipefail
 
+echo "==> setup-database.sh: iniciando..."
+
 PROJECT_DIR="/opt/golsfintech"
 ENV_FILE="${PROJECT_DIR}/backend/.env"
 DB_USER="golsfintech"
@@ -31,6 +33,7 @@ fi
 # Contrasena aleatoria de 32 caracteres alfanumericos: sin simbolos que
 # compliquen ni el archivo .env ni las sentencias SQL.
 DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+echo "==> Contrasena generada. Creando bases y usuario en MySQL..."
 
 GRANT_SQL=""
 for host in "${DB_HOSTS[@]}"; do
@@ -52,6 +55,8 @@ CREATE DATABASE IF NOT EXISTS golsfintech_test
 ${GRANT_SQL}
 FLUSH PRIVILEGES;
 SQL
+
+echo "==> MySQL configurado. Escribiendo backend/.env..."
 
 # Escribe la contrasena en el .env conservando el propietario original.
 OWNER="$(stat -c '%U:%G' "${ENV_FILE}")"
