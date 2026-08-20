@@ -5,6 +5,48 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-20 23:15] T2 — Migraciones de las 9 tablas (cierre)
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `T2: cierre`)
+**Contexto:** Cierre de la tarea que quedo bloqueada por falta de base de datos. El
+usuario ejecuto `scripts/setup-database.sh`, que creo `golsfintech` y `golsfintech_test`
+con el usuario `golsfintech` de minimo privilegio.
+**Cambios:** ninguno en las migraciones respecto al commit `edf9601`; en esta entrada se
+registra la ejecucion y la verificacion. `scripts/setup-database.sh` recibio tres
+correcciones (commits `fab9286`, `7407661`, `e206fe5`).
+**Verificacion:**
+- `php artisan migrate --force` -> 12 migraciones DONE (3 de Laravel + las 9 del diseno).
+- `php artisan migrate:status` -> las 12 en estado `[1] Ran`.
+- `SHOW TABLES` -> `prospects`, `identity_documents`, `identity_validations`,
+  `credit_applications`, `credit_simulations`, `customers`, `credit_lines`, `cards`,
+  `audit_logs` presentes con los nombres exactos acordados.
+- `DESCRIBE audit_logs` -> `prospect_id`, `affected_entity`, `affected_entity_id`,
+  `event_type`, `actor`, `ip_address`, `metadata`, `event_at`, `previous_hash`,
+  `current_hash` (`current_hash` con indice UNIQUE). Sin llave foranea por entidad.
+- `php artisan test` -> 5 pruebas, 5 aprobadas, 48 aserciones (incluye
+  `DatabaseSchemaTest`, que corre sobre `golsfintech_test`).
+- `ls -l backend/.env` -> `-rw-------` (600).
+**Siguiente paso pendiente:** T3 — Capas Domain, Application e Infrastructure. Crear las
+entidades y objetos de valor en `backend/app/Domain/` (Prospect, Credit, Identity, Audit),
+los casos de uso en `app/Application/` y los adaptadores en `app/Infrastructure/`,
+respetando la regla de dependencia. Verificar con
+`grep -rl "use Illuminate" backend/app/Domain` (no debe devolver nada).
+**Notas — defecto propio detectado y corregido:**
+`scripts/setup-database.sh` abortaba en silencio tras el primer mensaje. Causa: la linea
+`DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"`; al cerrar `head` la
+tuberia, `tr` muere por SIGPIPE (codigo 141) y `set -o pipefail` + `set -e` abortan el
+script sin imprimir nada. Se reprodujo con
+`bash -c 'set -euo pipefail; p=$(tr -dc "A-Za-z0-9" </dev/urandom | head -c 32)'` -> 141.
+Corregido usando `python3 secrets` y anadiendo un `trap ERR` que informa linea y codigo.
+No se registra en BUGS.md por no ser un defecto de seguridad de la aplicacion, sino un
+error funcional de un script de aprovisionamiento.
+**Notas — hallazgo del entorno:**
+Este MySQL tiene la resolucion de nombres activada: una conexion TCP desde `127.0.0.1`
+llega al servidor como `'golsfintech'@'localhost'`, por lo que una cuenta creada solo
+para `'127.0.0.1'` se rechaza con ERROR 1045. El script crea ambas.
+
+---
+
 ## [2026-08-20 22:26] T2 — Migraciones de las 9 tablas
 **Estado:** en progreso (bloqueado por credenciales de MySQL)
 **Commit:** ver `git log --oneline` (commit `T2 (en progreso): ...`)
