@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+# Sin esto, cualquier fallo intermedio aborta el script en silencio.
+trap 'echo "ERROR: fallo en la linea ${LINENO} (codigo de salida $?)." >&2' ERR
+
 echo "==> setup-database.sh: iniciando..."
 
 PROJECT_DIR="/opt/golsfintech"
@@ -32,7 +35,11 @@ fi
 
 # Contrasena aleatoria de 32 caracteres alfanumericos: sin simbolos que
 # compliquen ni el archivo .env ni las sentencias SQL.
-DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+#
+# Se genera con python3 y no con `tr ... | head -c 32`: al cerrar head la
+# tuberia, tr muere por SIGPIPE (codigo 141) y, con `set -o pipefail`, el script
+# abortaba en silencio en esta misma linea.
+DB_PASSWORD="$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')"
 echo "==> Contrasena generada. Creando bases y usuario en MySQL..."
 
 GRANT_SQL=""
