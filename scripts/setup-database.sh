@@ -12,7 +12,10 @@ set -euo pipefail
 PROJECT_DIR="/opt/golsfintech"
 ENV_FILE="${PROJECT_DIR}/backend/.env"
 DB_USER="golsfintech"
-DB_HOST="127.0.0.1"
+
+# Este MySQL resuelve 127.0.0.1 a "localhost", de modo que una cuenta creada solo
+# para '127.0.0.1' es rechazada con error 1045. Se crea para ambos hosts.
+DB_HOSTS=("localhost" "127.0.0.1")
 
 if [[ "${EUID}" -ne 0 ]]; then
     echo "Este script necesita root para conectarse a MySQL por socket." >&2
@@ -25,27 +28,32 @@ if [[ ! -f "${ENV_FILE}" ]]; then
     exit 1
 fi
 
-# Contrasena aleatoria de 32 caracteres sin simbolos que compliquen el .env.
+# Contrasena aleatoria de 32 caracteres alfanumericos: sin simbolos que
+# compliquen ni el archivo .env ni las sentencias SQL.
 DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+
+GRANT_SQL=""
+for host in "${DB_HOSTS[@]}"; do
+    GRANT_SQL+="
+CREATE USER IF NOT EXISTS '${DB_USER}'@'${host}' IDENTIFIED BY '${DB_PASSWORD}';
+ALTER USER '${DB_USER}'@'${host}' IDENTIFIED BY '${DB_PASSWORD}';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES
+    ON golsfintech.* TO '${DB_USER}'@'${host}';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES
+    ON golsfintech_test.* TO '${DB_USER}'@'${host}';
+"
+done
 
 mysql <<SQL
 CREATE DATABASE IF NOT EXISTS golsfintech
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS golsfintech_test
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASSWORD}';
-ALTER USER '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASSWORD}';
-
--- Minimo privilegio: solo lo necesario para operar y migrar estas dos bases.
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES
-    ON golsfintech.* TO '${DB_USER}'@'${DB_HOST}';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES
-    ON golsfintech_test.* TO '${DB_USER}'@'${DB_HOST}';
+${GRANT_SQL}
 FLUSH PRIVILEGES;
 SQL
 
-# Escribe la contrasena en el .env conservando el propietario original del archivo.
+# Escribe la contrasena en el .env conservando el propietario original.
 OWNER="$(stat -c '%U:%G' "${ENV_FILE}")"
 python3 - "${ENV_FILE}" "${DB_PASSWORD}" <<'PY'
 import pathlib, re, sys
@@ -62,10 +70,11 @@ PY
 chown "${OWNER}" "${ENV_FILE}"
 chmod 600 "${ENV_FILE}"
 
-# Comprueba que el usuario recien creado puede conectarse de verdad.
-if mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" >/dev/null 2>&1; then
+# Comprueba que el usuario recien creado conecta de verdad por TCP, que es como
+# lo hara Laravel (DB_HOST=127.0.0.1).
+if mysql -h 127.0.0.1 -u "${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" >/dev/null 2>&1; then
     echo "OK  Bases 'golsfintech' y 'golsfintech_test' listas."
-    echo "OK  Usuario '${DB_USER}'@'${DB_HOST}' creado con privilegios acotados."
+    echo "OK  Usuario '${DB_USER}' creado para localhost y 127.0.0.1 con privilegios acotados."
     echo "OK  Contrasena escrita en backend/.env (no se muestra ni se versiona)."
     echo
     echo "Ya puedes decirle a Claude que continue con T2."
