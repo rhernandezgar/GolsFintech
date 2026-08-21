@@ -5,6 +5,125 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 21:35] T5 — Autenticacion OAuth2 + PKCE + 2FA y RBAC de 5 roles
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `T5: ...`)
+**Precedido por:** commit `dbb3728` (`chore: formato PSR-12 con Pint`), 46 archivos
+reformateados antes de escribir codigo nuevo para que el reformateo no se mezclara con el.
+
+**Decision de stack:** `laravel/passport` ^13.7 (con `league/oauth2-server` 9.4.1), no
+Sanctum. Sanctum emite tokens pero no es un servidor OAuth2: no implementa el flujo de
+codigo de autorizacion con PKCE que exige la Fase 3 §4.4.
+
+**Lo que se implemento:**
+
+- **Servidor OAuth2 con PKCE S256.** Endpoints bajo el prefijo del catalogo MS-01
+  (`config('passport.path') = 'api/v1/auth'`): `GET|POST /auth/authorize`,
+  `POST /auth/token`, `POST /auth/refresh`, `DELETE /auth/session`, mas
+  `POST /auth/login`.
+- **`Http/Middleware/EnforcePkceS256`**, aplicado a todo el grupo de Passport por
+  `config('passport.middleware')`. Exige `code_challenge`; admite **solo S256** y rechaza
+  `plain` y la **omision del metodo** (RFC 7636 §4.3 la resuelve como `plain`, de modo que
+  aceptar la omision equivale a aceptar `plain`: la libreria por si sola lo aceptaba).
+  Rechaza ademas `response_type=token` y `grant_type=implicit`.
+- **Cliente publico.** `OAuthSpaClientSeeder` crea el cliente con `confidential: false`:
+  sin secreto. `FirstPartyClient` omite la pantalla de consentimiento para el cliente de
+  primera parte —preguntarle al usuario si autoriza a GolsFintech a acceder a GolsFintech
+  no es una decision, y acostumbra a aprobar consentimientos sin leerlos—.
+- **Flujo implicito descartado en el codigo**, con el porque escrito en
+  `AuthorizationServiceProvider::configureOAuthServer()`, y comprobado por prueba
+  (`the_implicit_grant_is_disabled_in_passport` mas dos que exigen el rechazo real de la
+  peticion). Tambien se desactivan el flujo de contrasena y el de codigo de dispositivo;
+  la migracion de `oauth_device_codes` se elimino y la tabla se elimino de la base.
+- **2FA TOTP** en `Infrastructure/Security/TotpAuthenticator`, sin dependencia externa.
+  Obligatorio para los tres perfiles administrativos; **un perfil administrativo sin
+  segundo factor dado de alta queda fuera, no exento**. Secreto cifrado a nivel de columna.
+- **RBAC de 5 roles con permisos por rol** en `Domain/Access/Role` y
+  `Domain/Access/Permission`, traslado literal de la tabla de alcance de la Fase 3 §4.9.
+  `Role::isReadOnly()` se **deriva** de los permisos: no puede contradecirlos.
+- **Autorizacion a nivel de objeto** en `Policies/CreditApplicationPolicy`, con anclaje
+  `users.prospect_id`. **Autorizacion por campo** para los ingresos declarados.
+- **Argon2id** en `config/hashing.php` (64 MiB, 4 pasadas).
+- `php artisan user:create` para el alta de perfiles administrativos. No hay endpoint de
+  alta: no existe auto-registro de personal administrativo.
+
+**Se aparta de lo habitual — el algoritmo del TOTP es SHA-256, no SHA-1.**
+La implementacion corriente de TOTP usa HMAC-SHA-1, pero la regla de seguridad no
+negociable 6 prohibe SHA-1 para cualquier proposito de seguridad. RFC 6238 §1.2 contempla
+SHA-256 y el parametro `algorithm=SHA256` del URI otpauth lo transmite al autenticador.
+**El costo es de compatibilidad:** Google Authenticator ignora ese parametro y calcula
+siempre con SHA-1, de modo que mostraria codigos que este servidor rechaza. Aegis, FreeOTP
+y 1Password si lo respetan. El algoritmo queda en `config('security.totp.algorithm')` por
+si el operador necesita decidir otra cosa con el criterio a la vista. **Esto conviene
+confirmarlo con el usuario antes de que haya usuarios reales dados de alta.**
+
+**Un defecto propio, detectado por el script y registrado:** `LoginController` derivaba la
+clave del contador de intentos con `sha1()`. Lo encontro la verificacion #2 de la higiene
+transversal de `verificar_avance.sh`, no una revision manual. Corregido a
+`hash('sha256', ...)` y registrado como **VUL-10** en `BUGS.md`. La misma corrida marco la
+verificacion #9 por dos descripciones en espanol en la firma de `user:create`; se pasaron
+a ingles (la ayuda de la linea de ordenes la lee quien opera el servidor, no el usuario
+final). Las 9 verificaciones vuelven a `[OK]`.
+
+**Una correccion de diseno a mitad de camino, que conviene conocer:** `EnforceReadOnlyRole`
+se aplicaba primero a **todo** el grupo `api`. Con `isReadOnly()` derivado de los permisos,
+eso dejaba fuera de servicio `POST /auth/refresh` y habria dejado tambien
+`DELETE /auth/session`: **un auditor no habria podido cerrar su propia sesion** y habria
+tenido que esperar a que su token caducara solo. Lo detecto la prueba
+`the_refresh_token_renews_the_access_token` con un 403 inesperado. Dos cambios: (a) el
+catalogo de permisos incorpora los de escritura del prospecto sobre su propio expediente
+—capturar datos, subir identificacion, aceptar simulacion—, que la Fase 3 §4.9 le atribuye
+y sin los cuales `isReadOnly()` mentia sobre el; (b) el middleware se aplica al grupo de
+**recursos de negocio**, no a los endpoints de sesion. Resultado: los roles de solo lectura
+son exactamente **auditor y cliente**, y la prueba lo exige con una lista cerrada.
+
+**Cambios (47 archivos, 4 773 lineas anadidas):**
+- `app/Domain/Access/{Role,Permission}.php` — nuevos, sin dependencias de framework.
+- `app/Domain/Audit/AuditEventType.php` — 7 eventos nuevos de acceso y consulta.
+- `app/Infrastructure/Security/{TotpAuthenticator,FirstPartyClient}.php` — nuevos.
+- `app/Infrastructure/Persistence/Eloquent/CreditApplicationRecord.php` — nuevo. Se
+  enlaza por `public_id` y no por el id autoincremental: un identificador secuencial
+  invita a recorrer las solicitudes ajenas cambiando un numero.
+- `app/Http/Middleware/{EnforcePkceS256,EnsureRole,EnforceReadOnlyRole}.php` — nuevos.
+- `app/Http/Controllers/{Auth,Api}/` — 6 controladores nuevos; `app/Policies/` — 1 politica.
+- `app/Providers/AuthorizationServiceProvider.php` — Gates por permiso, politica y ajustes
+  del servidor OAuth2. Sin `Gate::before`: un "el administrador puede todo" anularia las
+  restricciones explicitas de la Fase 3 §4.9.
+- `app/Console/Commands/CreateStaffUserCommand.php`, `database/seeders/OAuthSpaClientSeeder.php`.
+- `database/migrations/2026_08_21_210000_add_access_control_to_users_table.php` +
+  4 migraciones de Passport.
+- `config/{hashing,passport}.php` nuevos; `config/{auth,app,security}.php` ampliados.
+- `routes/api.php` nuevo; `bootstrap/app.php` con `apiPrefix: 'api/v1'`.
+- `.env.example` — bloque de autenticacion y control de acceso.
+
+**Verificacion:**
+- `bash scripts/verificar_avance.sh` -> **T5: OK (7 ok / 0 falta / 0 revisar)**, con
+  `php artisan test (auth/RBAC) en verde: 103 pruebas`. Totales **74 OK / 16 FALTA / 1 REVISAR** (antes de T5: 61 / 26 / 2).
+- `PAO_DISABLE=1 php artisan test` -> **246 pruebas, 246 aprobadas, 587 aserciones**
+  (antes 147). Pruebas nuevas (99): `RoleAccessMatrixTest` (17, sin base de datos),
+  `TotpAuthenticatorTest` (33, contra los vectores del apendice B de RFC 6238),
+  `OAuthPkceFlowTest` (12), `TwoFactorLoginTest` (16) y `ApiAccessControlTest` (21).
+- Higiene transversal: las 9 verificaciones en `[OK]`.
+- `./vendor/bin/pint --test` -> `passed`.
+- Regla hexagonal: `grep -rl "use Illuminate" backend/app/Domain` sin resultados; el nuevo
+  `Domain/Access` no importa nada del framework.
+
+**Las tres capas del 401/403, comprobadas por separado** (`ApiAccessControlTest`):
+401 sin token o con token invalido; 403 por rol insuficiente (el auditor no escribe, el
+analista de riesgos no lee la bitacora); **403 por objeto** —un prospecto autenticado, con
+el permiso generico de consultar solicitudes, no puede consultar la de otro prospecto—, que
+es el fallo que la Fase 3 §4.9 senala como el mas frecuente en APIs que si autentican bien.
+Se comprueba ademas que la negacion por objeto no revela folio, titular ni nombre de tabla.
+
+**Siguiente paso pendiente:** T7 — OCR e identidad. Segun `verificar_avance.sh` §T7 faltan
+8 de 9 verificaciones. Antes de T7 conviene cerrar T4/T5 con el usuario dos cosas: (a) si
+se acepta SHA-256 como algoritmo del TOTP con el costo de compatibilidad descrito arriba;
+(b) la rotacion del refresh token en cada uso, que hoy Passport hace pero ninguna prueba
+exige (VUL-03 sigue En progreso por eso y por la parte de la SPA, que es de T10).
+
+**Pendiente explicito de T12:** anadir Pint al hook pre-commit, junto con el detector de
+secretos que ya exige §T12.
+
 ## [2026-08-21 20:35] chore — Deteccion de suite en verde por codigo de salida
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `chore: la suite en verde se detecta...`)

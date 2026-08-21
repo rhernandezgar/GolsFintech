@@ -12,6 +12,18 @@ namespace App\Domain\Audit;
  */
 enum AuditEventType: string
 {
+    // --- Autenticacion y control de acceso (RS-01, RS-05, RS-06) -----------
+    // El acceso a informacion personal es en si mismo un evento auditable
+    // (Fase 2, pantalla P7): tambien se registra la consulta que si estaba
+    // autorizada, no solo el intento rechazado.
+    case AuthenticationSucceeded = 'auth.login_succeeded';
+    case AuthenticationFailed = 'auth.login_failed';
+    case TwoFactorChallengeFailed = 'auth.two_factor_failed';
+    case SessionEnded = 'auth.session_ended';
+    case AuthorizationDenied = 'auth.authorization_denied';
+    case CreditApplicationViewed = 'credit_application.viewed';
+    case AuditLogViewed = 'audit_log.viewed';
+
     case ProspectStarted = 'prospect.started';
     case ProspectDataCaptured = 'prospect.data_captured';
     case ProspectDataConfirmed = 'prospect.data_confirmed';

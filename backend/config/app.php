@@ -56,6 +56,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | URL de la SPA
+    |--------------------------------------------------------------------------
+    |
+    | Origen de la aplicacion de Vue. Es la base del redirect_uri registrado
+    | para el cliente publico de OAuth2: el servidor de autorizacion solo
+    | redirige a URIs registradas, de modo que un redirect_uri manipulado en la
+    | peticion no desvia el codigo de autorizacion a un servidor ajeno.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://127.0.0.1:6060'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

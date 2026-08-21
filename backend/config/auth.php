@@ -38,6 +38,13 @@ return [
     */
 
     'guards' => [
+        // Guard de la API: los tokens los emite y valida el servidor OAuth2
+        // (Passport). Todo endpoint bajo /api/v1 pasa por aqui.
+        'api' => [
+            'driver' => 'passport',
+            'provider' => 'users',
+        ],
+
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
