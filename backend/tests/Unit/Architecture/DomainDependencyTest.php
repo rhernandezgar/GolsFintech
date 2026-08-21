@@ -85,6 +85,41 @@ final class DomainDependencyTest extends TestCase
         $this->assertSame([], $offenders, 'La capa Application depende de infraestructura: '.implode(', ', $offenders));
     }
 
+    /**
+     * El intercambio de adaptador se resuelve SOLO por configuracion, en
+     * AdapterServiceProvider. Un `if` sobre el entorno, una llamada a config() o un
+     * nombre de clase de Infrastructure dentro de un caso de uso significan que la
+     * capa de aplicacion volvio a decidir con quien habla, y entonces el patron de
+     * puertos no esta cumpliendo su funcion: ya no se puede cambiar de proveedor
+     * sin tocar la logica de negocio ni probarla sin el proveedor real.
+     */
+    public function test_the_application_layer_does_not_decide_which_adapter_is_active(): void
+    {
+        $forbidden = [
+            'env(' => 'lee variables de entorno',
+            'config(' => 'lee configuracion',
+            'app(' => 'resuelve del contenedor',
+            'App\\Providers' => 'conoce los proveedores de servicio',
+            'APP_ENV' => 'mira el entorno',
+            '::environment(' => 'mira el entorno',
+            'getenv(' => 'lee variables de entorno',
+        ];
+
+        $offenders = [];
+
+        foreach ($this->phpFilesIn('app/Application') as $file) {
+            $contents = (string) file_get_contents($file->getPathname());
+
+            foreach ($forbidden as $needle => $why) {
+                if (str_contains($contents, $needle)) {
+                    $offenders[] = sprintf('%s -> %s (%s)', $file->getPathname(), $needle, $why);
+                }
+            }
+        }
+
+        $this->assertSame([], $offenders, 'Un caso de uso decide su adaptador: '.implode(', ', $offenders));
+    }
+
     public function test_the_seven_design_ports_exist(): void
     {
         $ports = ['ProspectRepository', 'DocumentRepository', 'OcrService', 'IdentityValidator',

@@ -5,6 +5,94 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 20:05] T4 — Los 7 puertos: interfaz + adaptador real + adaptador falso + enlaces
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `T4: ...`)
+**Contexto:** T3 dejo los siete puertos declarados y solo tres enlazados. Faltaban los
+cuatro servicios externos (OCR, identidad, tarjetas y notificaciones), un doble de prueba
+por puerto y que el intercambio de adaptador dependiera unicamente de la configuracion.
+**Cambios:**
+- `config/adapters.php` (nuevo): un driver por puerto. Es el UNICO lugar que decide que
+  adaptador queda activo. Los cuatro servicios externos van **simulados**: no hay convenio
+  con INE ni con RENAPO, el entorno es de desarrollo y ningun adaptador abre conexiones ni
+  usa credenciales.
+- `app/Providers/AdapterServiceProvider.php` (nuevo): enlaza los siete puertos leyendo esa
+  configuracion, con una tabla de drivers por puerto. Un driver inexistente falla al
+  resolver nombrando el puerto y los drivers disponibles, no en silencio. Los tres enlaces
+  de persistencia se mudaron aqui desde `AppServiceProvider`, que se queda con los
+  servicios propios (PiiHasher, AuditChain, motor de reglas).
+- Adaptadores simulados, **deterministas y capaces de fallar**:
+  - `Infrastructure/Ocr/SimulatedOcrService` + `OcrScenario`: devuelve un identificador de
+    trabajo `ocrsim-<escenario>-<16 hex del hash>`, que lleva escrito el desenlace para que
+    el worker de T7 pueda simular timeout (reintentable) o documento ilegible (no
+    reintentable) sin proveedor real. Escenario por `force_scenario` de configuracion o por
+    marca reservada en la ruta (`sandbox-timeout`, `sandbox-unreadable`). `fail_enqueue`
+    simula la cola caida, que es un error distinto del procesamiento.
+  - `Infrastructure/Identity/SimulatedIdentityValidator` + `IdentityScenario`: CURP de
+    laboratorio con desenlace fijo (rechazo, indisponibilidad, marca antifraude), como el
+    sandbox de cualquier proveedor de eKYC. Empiezan por **XEXX** —el prefijo generico
+    oficial de persona extranjera— y por tanto no pueden ser la CURP de nadie real. Folio
+    de verificacion determinista, derivado del id publico del prospecto.
+  - `Infrastructure/Card/SimulatedCardIssuer`: token `tok_sim_...` y cuatro digitos, nunca
+    un PAN; `IssuedCard` rechaza por su cuenta cualquier token con forma de tarjeta.
+  - `Infrastructure/Notification/SimulatedNotificationSender`: no envia nada, deja
+    constancia en el registro con el **destinatario enmascarado** (un correo o un telefono
+    tambien son datos personales y el registro es persistente).
+- `Domain/Exception/ExternalServiceUnavailableException` (nuevo): los adaptadores traducen
+  SU fallo a un tipo que el dominio conoce. `userMessage()` no nombra el proveedor ni el
+  motivo tecnico (regla de seguridad 8, VUL-05).
+- Dobles de prueba en `tests/Support/Doubles/` (7): `InMemoryProspectRepository`,
+  `InMemoryDocumentRepository`, `InMemoryAuditLogger`, `FakeOcrService` (`willTimeOut()`,
+  `willBeUnreadable()`, `willFailToEnqueue()`), `FakeIdentityValidator` (`willReject()`,
+  `willBeUnavailable()`, `willFlagFraud()`, `willThrowUnavailable()`), `FakeCardIssuer` y
+  `FakeNotificationSender`, ambos con `willFail()`.
+- Pruebas nuevas (42): `tests/Unit/Infrastructure/SimulatedAdaptersTest` (18: determinismo
+  y fallo de los cuatro simuladores), `tests/Unit/Application/UploadIdentityDocumentTest`
+  (4: un caso de uso completo contra dobles, sin base de datos ni framework),
+  `tests/Feature/PortBindingTest` (19: los 7 puertos resueltos del contenedor, driver
+  desconocido, escenario por configuracion y sustitucion por doble) y una regla de
+  arquitectura nueva en `DomainDependencyTest`.
+- `.env.example`: variables de los cinco drivers y de los escenarios de simulacion.
+**Verificacion:**
+- `bash scripts/verificar_avance.sh` -> **T4: OK (7 ok / 0 falta / 0 revisar)**, los siete
+  puertos con `tinker: si`. Totales 61 OK / 26 FALTA / 2 REVISAR.
+- `php artisan test` -> **147 pruebas, 147 aprobadas, 359 aserciones** (antes 105).
+- Higiene transversal: las 9 verificaciones en `[OK]`.
+- `DomainDependencyTest::test_the_application_layer_does_not_decide_which_adapter_is_active`
+  falla la integracion continua si en `app/Application` aparece `env(`, `config(`, `app(`,
+  `APP_ENV`, `::environment(` o `getenv(`.
+**Siguiente paso pendiente:** T5 — Autenticacion OAuth2 + PKCE + 2FA y RBAC de 5 roles.
+Segun `verificar_avance.sh` §T5 faltan las seis: servidor OAuth2 en `backend/composer.json`
+(hoy no hay ninguno declarado), PKCE (`code_challenge`), 2FA, los 5 roles
+(`prospect`, `customer`, `admin`, `auditor`, `risk_analyst`) y pruebas que exijan 401 sin
+token y 403 con rol insuficiente.
+
+**Notas — decisiones que conviene revisar:**
+
+1. **"Adaptador real" de los cuatro servicios externos = el simulado.** Para OCR,
+   identidad, tarjetas y notificaciones no existe hoy un adaptador contra proveedor: no
+   hay convenio con INE ni con RENAPO y el entorno es de desarrollo. Lo que vive en
+   `Infrastructure` es el simulador, y **es codigo real de la aplicacion**, no un doble de
+   pruebas: se selecciona por configuracion y corre en el entorno. El adaptador contra
+   proveedor entra en su tarea (OCR e identidad en T7, notificaciones en T8, tarjetas en
+   T9) anadiendo una entrada a la tabla de drivers de `AdapterServiceProvider`. La seccion
+   T4 del script sale en OK con esto porque su criterio es que cada puerto tenga interfaz,
+   adaptador en `Infrastructure`, doble y enlace resoluble; conviene tenerlo presente al
+   leer ese OK.
+2. **Los escenarios de simulacion son deterministas a proposito.** Un simulador que
+   respondiera al azar volveria intermitentes todas las pruebas que dependan de el. El
+   desenlace se deriva de la entrada (ruta del documento, CURP) o se fuerza por
+   configuracion, nunca de un `rand()`.
+3. **El escenario del OCR viaja dentro del identificador del trabajo.** Es el contrato
+   entre backend y worker: T7 no necesita leer la configuracion del backend ni consultar
+   la base para saber que debe simular. Si en T7 se decide otro mecanismo, hay que cambiar
+   las dos puntas.
+4. **Los dobles de prueba no se enlazan desde `config/adapters.php`.** Viven en `tests/` y
+   los enchufa cada prueba. Apuntar la configuracion de la aplicacion a una clase de
+   `tests/` romperia la carga en produccion, donde `autoload-dev` no existe.
+
+---
+
 ## [2026-08-21 19:15] chore — Separacion de hallazgos verificados y controles preventivos
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `chore: separa hallazgos verificados...`)
