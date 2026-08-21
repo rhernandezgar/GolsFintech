@@ -155,3 +155,16 @@ Además:
 - No introducir microservicios, colas adicionales ni librerías pesadas fuera del diseño.
 - No cambiar los nombres de tablas, columnas, puertos ni vistas definidos arriba.
 - No tocar configuración global del servidor sin consultar al usuario.
+
+## 9. `scripts/verificar_avance.sh` — script inmutable
+
+Audita el avance real contra el **plan T1–T12**, no contra el código escrito. Su criterio
+sale del plan; que una tarea no iniciada salga `[FALTA]` es el resultado correcto.
+
+**Una vez commiteado, el asistente no lo modifica por su cuenta.** Si el script marca mal
+algo que sí existe, se le informa al usuario **qué comando falla y por qué**, y el usuario
+decide si se ajusta. Nunca se edita en la misma sesión en que se trabaja la tarea que ese
+cambio afectaría: ajustar el medidor mientras se trabaja lo medido lo invalida.
+
+Se ejecuta con `bash scripts/verificar_avance.sh`. No usa `set -e` a propósito: un fallo
+individual no debe abortar la auditoría.
