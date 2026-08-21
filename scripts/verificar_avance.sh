@@ -610,7 +610,7 @@ endtask
 
 # ====================================================================== T12 =====
 task "T12" "Analisis de seguridad: composer audit, npm audit, detector de secretos" \
-     "Los tres comandos corren y sus hallazgos estan en BUGS.md"
+     "Los tres comandos corren y sus hallazgos estan en BUGS.md (controles preventivos: SECURITY_CHECKLIST.md)"
 
 HOOK=""
 [ -f .githooks/pre-commit ] && HOOK=.githooks/pre-commit
@@ -655,13 +655,42 @@ for d in frontend worker; do
   fi
 done
 
+# BUGS.md y SECURITY_CHECKLIST.md se cuentan POR SEPARADO: el primero son hallazgos
+# verificados sobre este repositorio (evidencia de auditoria) y el segundo son controles
+# preventivos que exige el diseno. Sumarlos volveria a mezclar lo que se comprobo aqui con
+# lo que solo esta previsto (CLAUDE.md seccion 6.2).
 if [ -f BUGS.md ]; then
   NBUG=$(grep -cE "^\| VUL-" BUGS.md)
-  NOPEN=$(grep -E "^\| VUL-" BUGS.md | grep -c "Abierto")
-  ok "BUGS.md con $NBUG entrada(s); $NOPEN abierta(s)"
-  [ "$NOPEN" -gt 0 ] && warn "$NOPEN vulnerabilidad(es) siguen Abiertas en BUGS.md"
+  NOPEN=$(grep -E "^\| VUL-" BUGS.md | grep -c "| Abierto |")
+  NPROG=$(grep -E "^\| VUL-" BUGS.md | grep -c "| En progreso |")
+  ok "BUGS.md: $NBUG hallazgo(s) verificado(s); $NOPEN abierto(s), $NPROG en progreso"
+  [ "$NOPEN" -gt 0 ] && warn "$NOPEN hallazgo(s) siguen Abiertos en BUGS.md"
+  # Cada hallazgo debe decir como se detecto: sin evidencia no es un hallazgo.
+  NEVID=$(grep -cE "^\| VUL-.*(composer audit|npm audit|artisan test|grep |bash |curl |reporte del usuario)" BUGS.md)
+  if [ "$NEVID" -eq "$NBUG" ]; then
+    ok "Los $NBUG hallazgo(s) citan el comando o procedimiento que los detecto"
+  else
+    no "$((NBUG - NEVID)) hallazgo(s) de BUGS.md sin evidencia citada: no acreditan auditoria"
+  fi
 else
   no "No existe BUGS.md"
+fi
+
+if [ -f SECURITY_CHECKLIST.md ]; then
+  NCTL=$(grep -cE "^\| VUL-" SECURITY_CHECKLIST.md)
+  NDONE=$(grep -E "^\| VUL-" SECURITY_CHECKLIST.md | grep -c "| Implementado")
+  NCPROG=$(grep -E "^\| VUL-" SECURITY_CHECKLIST.md | grep -c "| En progreso")
+  NPEND=$(grep -E "^\| VUL-" SECURITY_CHECKLIST.md | grep -c "| Pendiente")
+  ok "SECURITY_CHECKLIST.md: $NCTL control(es) preventivo(s); $NDONE implementado(s), $NCPROG en progreso, $NPEND pendiente(s)"
+  [ "$NPEND" -gt 0 ] && info "$NPEND control(es) del diseno todavia sin implementar: es lo esperado mientras queden tareas abiertas"
+  # Ningun identificador puede vivir en los dos archivos a la vez.
+  DUP=$(comm -12 \
+        <(grep -oE "^\| VUL-[0-9]+" BUGS.md 2>/dev/null | tr -d '| ' | sort -u) \
+        <(grep -oE "^\| VUL-[0-9]+" SECURITY_CHECKLIST.md | tr -d '| ' | sort -u) | wc -l | tr -d ' ')
+  [ "$DUP" = "0" ] && ok "Ningun identificador VUL-xx esta duplicado entre los dos archivos" \
+                   || no "$DUP identificador(es) VUL-xx aparecen en BUGS.md y en SECURITY_CHECKLIST.md"
+else
+  no "No existe SECURITY_CHECKLIST.md"
 fi
 endtask
 

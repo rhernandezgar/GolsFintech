@@ -41,7 +41,7 @@ de Nginx, PHP-FPM ni MySQL sin consultar antes al usuario.
 
 ```
 /opt/golsfintech
-├── CLAUDE.md, PROGRESS.md, BUGS.md, README.md, .gitignore
+├── CLAUDE.md, PROGRESS.md, BUGS.md, SECURITY_CHECKLIST.md, README.md, .gitignore
 ├── docs/                         # Fases 1, 2 y 3 (diseño; no se modifican)
 ├── backend/                      # Laravel 13 / PHP 8.4
 │   ├── app/
@@ -155,11 +155,50 @@ arrastraría los hashes. `PII_HASH_KEY` la toma como respaldo solo para no rompe
 entorno local; en producción se define aparte. **Vive en el vault, nunca en el `.env` de
 producción**, ni en el código ni en un commit.
 
+### 6.2 `BUGS.md` y `SECURITY_CHECKLIST.md` — dos archivos, dos naturalezas
+
+Mezclarlos fue un error: un control preventivo que nadie ha comprobado y un defecto real
+reproducible no son la misma cosa, y presentarlos juntos como "vulnerabilidades
+encontradas" resta credibilidad a los dos.
+
+**`BUGS.md` — hallazgos verificados sobre este repositorio.** Es lo que se muestra como
+evidencia de auditoría. Solo entra ahí lo que provenga de:
+
+1. la salida de `composer audit`, `npm audit` o un análisis estático **ejecutado sobre
+   este repositorio**;
+2. un defecto de seguridad detectado en el código real y **reproducible**, incluidos los
+   que introduzca y corrija el propio asistente;
+3. un reporte del usuario sobre algo observado.
+
+Cada entrada indica la **fecha** y **cómo se detectó** (comando o procedimiento). **Si no
+se puede señalar la evidencia, no va en `BUGS.md`**: basta una entrada indemostrable para
+que el archivo entero deje de servir como evidencia.
+
+**`SECURITY_CHECKLIST.md` — controles preventivos que exige el diseño.** Columnas: `ID |
+Control | Origen (fase de diseño) | Tarea que lo implementa (T#) | Estado | CWE / OWASP |
+Verificación`. La verificación indica qué comprueba que el control quedó implementado,
+idealmente la sección correspondiente de `scripts/verificar_avance.sh`; cuando el script
+todavía no lo cubre, se dice explícitamente y se nombra la prueba que lo acreditará.
+
+**Reglas comunes:**
+
+- **Nunca se borra una entrada de ninguno de los dos.** Las resueltas se marcan como
+  resueltas; los controles implementados se marcan como implementados.
+- **Un control del checklist no se mueve a `BUGS.md` al implementarse:** se marca como
+  implementado en su sitio. Solo pasa a `BUGS.md` si más adelante se descubre que quedó
+  mal implementado y eso constituye un hallazgo real y reproducible, como entrada nueva
+  que cita el ID del control.
+- Los identificadores `VUL-xx` se conservan tal cual: están citados en los documentos
+  entregados de las tres fases y la trazabilidad con ellos debe mantenerse. La serie es
+  **continua entre ambos archivos** y ningún número se reutiliza. VUL-01 a VUL-08 son
+  controles preventivos (Fase 3 §3.4, redactados como escenario ilustrativo, no como
+  análisis de este código); VUL-09 en adelante son hallazgos verificados.
+
 ## 7. Regla operativa de continuidad
 
-**Al iniciar sesión, lee `PROGRESS.md` y `BUGS.md` completos y contrasta su contenido
-contra `git log --oneline` y `git status`. Si no coinciden, avísale al usuario antes de
-continuar: el código manda sobre el archivo.**
+**Al iniciar sesión, lee `PROGRESS.md`, `BUGS.md` y `SECURITY_CHECKLIST.md` completos y
+contrasta su contenido contra `git log --oneline` y `git status`. Si no coinciden, avísale
+al usuario antes de continuar: el código manda sobre el archivo.**
 
 Además:
 - No se declara una tarea terminada si no está commiteada. Sin commit, está en progreso.
@@ -170,9 +209,10 @@ Además:
   El campo "Siguiente paso pendiente" debe ser accionable sin contexto: archivo, función
   y qué falta exactamente.
 - Commit al cerrar cada tarea con el prefijo `T#:`.
-- Nunca se borran entradas de `PROGRESS.md` ni de `BUGS.md`.
-- Todo defecto de seguridad encontrado se registra en `BUGS.md`, incluidos los que
-  introduzca y corrija el propio asistente.
+- Nunca se borran entradas de `PROGRESS.md`, `BUGS.md` ni `SECURITY_CHECKLIST.md`.
+- Todo defecto de seguridad **verificado** se registra en `BUGS.md`, incluidos los que
+  introduzca y corrija el propio asistente; los controles preventivos del diseño van en
+  `SECURITY_CHECKLIST.md`. El criterio de cada archivo esta en la seccion 6.2.
 
 ## 8. Qué no hacer
 

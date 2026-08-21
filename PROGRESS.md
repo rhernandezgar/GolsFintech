@@ -5,6 +5,57 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 19:15] chore — Separacion de hallazgos verificados y controles preventivos
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `chore: separa hallazgos verificados...`)
+**Contexto:** `BUGS.md` mezclaba dos cosas distintas. Las ocho entradas VUL-01 a VUL-08 no
+salieron de analizar este codigo: se redactaron en la Fase 3 (§3.4) como escenario
+ilustrativo del tipo de defectos que este stack suele producir. Son controles preventivos
+validos, pero llamarlos "vulnerabilidades encontradas" es inexacto, y una sola entrada
+indemostrable le quita valor probatorio a todo el archivo.
+**Cambios:**
+- `SECURITY_CHECKLIST.md` (nuevo): las 8 VUL-xx como controles preventivos, con columnas
+  ID / Control / Origen (fase de diseno) / Tarea que lo implementa (T#) / Estado / CWE-OWASP
+  / Verificacion. La verificacion cita la seccion concreta de `verificar_avance.sh` que
+  acredita cada control y, donde el script todavia no lo cubre (VUL-01 tipo real del
+  archivo, VUL-03 almacenamiento del token), lo dice explicitamente y nombra la prueba que
+  lo acreditara. Los identificadores se conservan tal cual: estan citados en los
+  documentos entregados de las tres fases.
+- `BUGS.md` (reescrito): solo hallazgos verificados sobre este repositorio. Queda **una**
+  entrada, VUL-09 (tasas no monotonas, detectada y corregida en T6), con columna nueva
+  «Como se detecto» que cita el comando reproducible. Se agrega la seccion «Analisis
+  ejecutados», con fecha, comando y resultado de `composer audit`, los dos `npm audit` y
+  la higiene transversal: una ejecucion sin hallazgos tambien es evidencia, y es lo que
+  permite afirmar que la tabla esta corta porque no hay mas, no porque no se haya buscado.
+  Queda anotado que **no** se ha ejecutado ningun analisis estatico: no hay herramienta
+  SAST en `require-dev` (`laravel/pint` es formateador), y eso es parte de T12.
+- `CLAUDE.md`: seccion **6.2** nueva con el criterio de admision de cada archivo y las
+  reglas comunes (no se borra nada; un control implementado se marca en su sitio y **no**
+  se mueve a `BUGS.md`; solo pasa a `BUGS.md` si mas adelante se descubre mal implementado
+  y eso constituye un hallazgo real). Actualizadas la seccion 3 (estructura) y la 7
+  (lectura de inicio de sesion y regla de no borrado).
+- `scripts/verificar_avance.sh`, seccion T12 **con autorizacion expresa del usuario**
+  (CLAUDE.md seccion 9): cuenta los dos archivos por separado, exige que cada hallazgo de
+  `BUGS.md` cite el comando que lo detecto y comprueba que ningun identificador VUL-xx
+  aparezca en los dos archivos a la vez.
+**Verificacion:**
+- `bash scripts/verificar_avance.sh` -> T12 pasa de **4 ok / 1 falta / 1 revisar** a
+  **7 ok / 1 falta / 0 revisar**. Lo que sigue en `[FALTA]` es el hook pre-commit con
+  detector de secretos, que es trabajo real de T12.
+- Lectura del script: `BUGS.md: 1 hallazgo(s) verificado(s); 0 abierto(s)`,
+  `SECURITY_CHECKLIST.md: 8 control(es) preventivo(s); 0 implementado(s), 2 en progreso,
+  6 pendiente(s)`, `Ningun identificador VUL-xx esta duplicado entre los dos archivos`.
+- Totales de la auditoria: 54 OK / 33 FALTA / 2 REVISAR (antes 51 / 33 / 3).
+**Siguiente paso pendiente:** sin cambios — T4, los 7 puertos con adaptador real, adaptador
+falso y enlaces (ver la entrada de T6).
+
+**Nota:** el `BUGS.md` reescrito se creo por error dentro de `backend/` por un cambio de
+directorio arrastrado entre comandos; se movio a la raiz antes de commitear. Lo detecto la
+verificacion nueva de identificadores duplicados, que reporto las 8 VUL-xx en los dos
+archivos a la vez porque seguia leyendo el `BUGS.md` viejo de la raiz.
+
+---
+
 ## [2026-08-21 19:05] T6 — Motor de reglas de credito con pruebas unitarias sin BD
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `T6: ...`)
