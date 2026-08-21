@@ -166,5 +166,13 @@ algo que sí existe, se le informa al usuario **qué comando falla y por qué**,
 decide si se ajusta. Nunca se edita en la misma sesión en que se trabaja la tarea que ese
 cambio afectaría: ajustar el medidor mientras se trabaja lo medido lo invalida.
 
+**Única excepción — la lista de palabras de la verificación #8** (convención de idioma,
+`LANG_WORDS` en el bloque de higiene transversal): el asistente **sí** puede ampliarla
+cuando aparezca un término del dominio que se haya colado en español y la lista todavía no
+cubra. Ampliarla no es modificar el criterio del script, es completarlo: el criterio
+—«todo el código en inglés», sección 4— no cambia. Solo se **añaden** palabras; quitar una
+palabra, cambiar las excepciones (RFC, CURP, INE, RENAPO), alterar los directorios que se
+revisan o cualquier otro cambio al script sigue requiriendo autorización del usuario.
+
 Se ejecuta con `bash scripts/verificar_avance.sh`. No usa `set -e` a propósito: un fallo
 individual no debe abortar la auditoría.

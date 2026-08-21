@@ -737,6 +737,136 @@ HARD=$(grep -rnEi "(password|secret|api_key|token)[[:space:]]*=[[:space:]]*['\"]
 [ "$HARD" = "0" ] && ok "Sin secretos escritos directamente en el codigo" \
                   || warn "$HARD posible(s) secreto(s) en el codigo: revisar"
 
+# 8. Convencion de idioma: TODO el codigo en ingles (CLAUDE.md seccion 4).
+#    Se revisan identificadores: nombre de clase, de metodo, de variable, de columna
+#    y de archivo. NO se revisan (van en espanol por convencion y no deben marcarse):
+#      - comentarios (// , # , /* */)
+#      - cadenas de texto, incluidos los mensajes al usuario final
+#      - el <template> de los .vue (es texto para el usuario; solo se lee <script>)
+#      - los .md y cualquier archivo que no sea codigo
+#    Excepciones que nunca se reportan: RFC, CURP, INE, RENAPO.
+#    scripts/ queda fuera a proposito: sus nombres los eligio el usuario, no el codigo.
+#    El criterio es una lista de palabras del dominio; se comparan tokens completos
+#    (tras partir camelCase y snake_case), no subcadenas, para no marcar "linear"
+#    por "linea". Los acentos se normalizan antes de comparar.
+LANG_DIRS=""
+for d in backend/app backend/routes backend/config backend/database backend/tests \
+         frontend/src worker/src; do
+  [ -d "$d" ] && LANG_DIRS="$LANG_DIRS $d"
+done
+
+LANG_WORDS="prospecto solicitud credito cliente tarjeta bitacora auditoria usuario
+contrasena clave nombre apellido fecha documento identificacion validacion
+verificacion simulacion linea estado estatus tipo numero correo telefono direccion
+calle colonia municipio ciudad domicilio entidad codigo edad sexo monto importe
+ingreso mensual mensualidad plazo tasa saldo limite moneda abono cobro pago cuota
+cuenta capacidad riesgo regla evento firma cadena intento contrato vigencia
+vencimiento sucursal empleado salario sueldo deuda archivo imagen respuesta peticion
+resultado fallo prueba mensaje inicio guardar buscar crear borrar eliminar actualizar
+listar obtener enviar calcular validar verificar generar registrar consultar
+autorizar rechazar aprobar procesar mostrar cargar subir descargar iniciar terminar
+aprobado rechazado autorizado cancelado pendiente activo inactivo
+consulta captura registro busqueda calculo carga listado detalle"
+LANG_EXC="rfc curp ine renapo"
+
+LANG_AWK=$(cat <<'AWK'
+function norm(s) {
+  gsub(/á/,"a",s); gsub(/é/,"e",s); gsub(/í/,"i",s); gsub(/ó/,"o",s)
+  gsub(/ú/,"u",s); gsub(/ü/,"u",s); gsub(/ñ/,"n",s)
+  gsub(/Á/,"A",s); gsub(/É/,"E",s); gsub(/Í/,"I",s); gsub(/Ó/,"O",s)
+  gsub(/Ú/,"U",s); gsub(/Ü/,"U",s); gsub(/Ñ/,"N",s)
+  return s
+}
+# Parte camelCase/PascalCase en palabras sueltas.
+function splitcamel(s,   i,c,p,out) {
+  out=""; p=""
+  for (i=1; i<=length(s); i++) {
+    c = substr(s,i,1)
+    if (c ~ /[A-Z]/ && p ~ /[a-z0-9]/) out = out " "
+    out = out c; p = c
+  }
+  return out
+}
+function spanish(t) {
+  if (t in EX) return 0
+  if (t in SP) return 1
+  if (length(t) > 3 && substr(t,length(t)-1) == "es" && substr(t,1,length(t)-2) in SP) return 1
+  if (length(t) > 2 && substr(t,length(t))  == "s"  && substr(t,1,length(t)-1) in SP) return 1
+  return 0
+}
+# Reporta como mucho un hallazgo por linea, para no inundar la salida.
+function check(text, lineno, kind,   i,n,arr,t) {
+  text = norm(text)
+  gsub(/[^A-Za-z0-9_]/, " ", text)
+  gsub(/_/, " ", text)
+  n = split(tolower(splitcamel(text)), arr, " ")
+  for (i=1; i<=n; i++) {
+    t = arr[i]
+    if (spanish(t)) { printf "%s:%d: %s -> %s\n", FILENAME, lineno, kind, t; return }
+  }
+}
+BEGIN {
+  n = split(WORDS, w, /[ \n\t]+/); for (i=1; i<=n; i++) if (w[i] != "") SP[w[i]] = 1
+  n = split(EXC,   e, /[ \n\t]+/); for (i=1; i<=n; i++) if (e[i] != "") EX[e[i]] = 1
+}
+FNR == 1 {
+  inblock=0; here=""; inscript=0
+  isvue = (FILENAME ~ /\.vue$/)
+  isphp = (FILENAME ~ /\.php$/)
+  base = FILENAME; sub(/.*\//,"",base); sub(/\.[A-Za-z]+$/,"",base)
+  check(base, 1, "nombre de archivo")
+}
+{
+  line = $0
+  # .vue: solo el bloque <script>; el <template> es texto para el usuario.
+  if (isvue) {
+    if (line ~ /<script/)    { inscript=1; next }
+    if (line ~ /<\/script>/) { inscript=0; next }
+    if (!inscript) next
+  }
+  # heredoc / nowdoc de PHP: es texto, no codigo.
+  if (here != "") { if (line ~ ("^[ \t]*" here "[ \t]*;?[ \t]*$")) here=""; next }
+  if (isphp && match(line, /<<<[ \t]*['"]?[A-Za-z_][A-Za-z0-9_]*/)) {
+    h = substr(line, RSTART, RLENGTH); gsub(/[<>'"\t ]/,"",h); here = h
+    sub(/<<<.*$/, "", line)
+  }
+  # comentarios de bloque
+  if (inblock) {
+    if (line ~ /\*\//) { sub(/^.*\*\//, "", line); inblock=0 } else next
+  }
+  while (match(line, /\/\*/)) {
+    if (line ~ /\/\*.*\*\//) sub(/\/\*.*\*\//, " ", line)
+    else { sub(/\/\*.*$/, "", line); inblock=1; break }
+  }
+  # cadenas de texto (mensajes al usuario incluidos)
+  gsub(/"[^"]*"/, " ", line)
+  gsub(/'[^']*'/, " ", line)
+  gsub(/`[^`]*`/, " ", line)
+  # comentarios de linea
+  sub(/\/\/.*$/, "", line)
+  if (isphp) sub(/#.*$/, "", line)
+  check(line, FNR, "identificador")
+}
+AWK
+)
+
+if [ -z "$LANG_DIRS" ]; then
+  warn "Aun no hay codigo de aplicacion: la convencion de idioma no se puede acreditar"
+else
+  LANG_HITS=$(find $LANG_DIRS -type f \( -name '*.php' -o -name '*.js' -o -name '*.mjs' \
+                -o -name '*.cjs' -o -name '*.ts' -o -name '*.vue' \) 2>/dev/null | sort |
+              xargs -r awk -v WORDS="$LANG_WORDS" -v EXC="$LANG_EXC" "$LANG_AWK" 2>/dev/null)
+  LANG_N=$(printf "%s" "$LANG_HITS" | grep -c . )
+  if [ "$LANG_N" = "0" ]; then
+    ok "Identificadores en ingles: sin nombres en espanol en el codigo"
+  else
+    no "$LANG_N identificador(es) en espanol (CLAUDE.md seccion 4: todo el codigo en ingles)"
+    printf "%s\n" "$LANG_HITS" | head -20 | sed 's/^/            /'
+    [ "$LANG_N" -gt 20 ] && info "... y $((LANG_N - 20)) mas"
+    info "No se marcan comentarios, mensajes al usuario ni .md; RFC, CURP, INE y RENAPO estan exentos."
+  fi
+fi
+
 # ==================================================================== resumen ===
 hdr "Resumen por tarea"
 printf "%s" "$SUMMARY" | while IFS='|' read -r id o n w; do
