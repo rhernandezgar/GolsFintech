@@ -1,0 +1,33 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Audit;
+
+/**
+ * Catalogo de eventos de la bitacora (audit_logs.event_type).
+ *
+ * Es un enum y no texto libre para que la bitacora se pueda consultar y auditar por
+ * tipo sin depender de como se haya escrito el evento en cada punto del codigo.
+ */
+enum AuditEventType: string
+{
+    case ProspectStarted = 'prospect.started';
+    case ProspectDataCaptured = 'prospect.data_captured';
+    case ProspectDataConfirmed = 'prospect.data_confirmed';
+    case ProspectAbandoned = 'prospect.abandoned';
+    case DocumentUploaded = 'document.uploaded';
+    case DocumentOcrQueued = 'document.ocr_queued';
+    case DocumentOcrCompleted = 'document.ocr_completed';
+    case DocumentOcrFailed = 'document.ocr_failed';
+    case IdentityValidationRequested = 'identity.validation_requested';
+    case IdentityValidationSucceeded = 'identity.validation_succeeded';
+    case IdentityValidationRejected = 'identity.validation_rejected';
+    case CreditApplicationOpened = 'credit_application.opened';
+    case CreditSimulationGenerated = 'credit_simulation.generated';
+    case CreditSimulationAccepted = 'credit_simulation.accepted';
+    case CreditSimulationRejected = 'credit_simulation.rejected';
+    case CustomerCreated = 'customer.created';
+    case CreditLineOpened = 'credit_line.opened';
+    case CardIssued = 'card.issued';
+}

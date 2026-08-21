@@ -5,6 +5,84 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 14:30] T3 — Capas Domain / Application / Infrastructure
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `T3: ...`)
+**Contexto:** Levantar el nucleo hexagonal: entidades y objetos de valor sin dependencia
+del framework, los siete puertos del diseno, los casos de uso de orquestacion y los
+primeros adaptadores reales sobre Eloquent.
+**Cambios:**
+- `backend/app/Domain/` (55 clases): `Shared/` (Money, Uuid, Folio, Email, PhoneNumber),
+  `Identity/` (Curp, Rfc, IdentityDocument, IdentityValidationResult y enums),
+  `Prospect/` (Prospect + CaptureMethod, CaptureStatus, Sex),
+  `Credit/` (Term, AnnualRate, CreditPolicy, AmortizationCalculator, CreditRulesEngine,
+  CreditOffer, CreditApplication, CreditSimulation y enums), `Audit/` (AuditEvent,
+  AuditChain, SensitiveDataMasker, AuditContext, AuditEventType), `Card/`,
+  `Notification/`, `Exception/` (11 excepciones propias) y `Port/` (los 7 puertos).
+- `backend/app/Application/` (8 clases): casos de uso `StartProspectCapture`,
+  `CaptureProspectData`, `ConfirmProspectData`, `UploadIdentityDocument`,
+  `SimulateCredit` y los DTO de entrada y salida.
+- `backend/app/Infrastructure/` (9 clases): `ProspectRecord`, `IdentityDocumentRecord`,
+  `AuditLogRecord`, sus mapeadores, `EloquentProspectRepository`,
+  `EloquentDocumentRepository`, `EloquentAuditLogger` y `Security/PiiHasher`.
+- `backend/app/Providers/AppServiceProvider.php`: enlaces puerto -> adaptador.
+- `backend/config/security.php`: llave de hash de identificadores personales.
+- `backend/database/migrations/2026_08_21_101500_make_prospect_full_name_nullable.php`.
+- 12 archivos de prueba nuevos en `backend/tests/`.
+**Verificacion:**
+- `php artisan test` -> 98 pruebas, 98 aprobadas, 248 aserciones.
+- `bash scripts/verificar_avance.sh` -> **T3: OK (13 ok / 0 falta / 0 revisar)**; higiene
+  transversal con las 9 verificaciones en `[OK]`, incluida la de idioma.
+- `grep -rl "use Illuminate" backend/app/Domain` -> sin resultados. Ademas la regla queda
+  cubierta por `tests/Unit/Architecture/DomainDependencyTest.php`, que falla la
+  integracion continua si alguien contamina la capa.
+- Digito verificador comprobado contra vectores reales: CURP `HEGG560427MVZRRL04`
+  (ejemplo de RENAPO), RFC `SAT970701NN3` (persona moral, RFC del SAT) y
+  `GODE561231GR8` (persona fisica, RFC de pruebas del CFDI).
+**Siguiente paso pendiente:** T4 — Los 7 puertos con adaptador real, adaptador falso y
+enlaces. Faltan por implementar los adaptadores de `OcrService`, `IdentityValidator`,
+`CardIssuer` y `NotificationSender` (los tres primeros hoy declarados y sin enlazar en
+`AppServiceProvider::register()`), mas un doble de prueba por puerto en
+`backend/tests/` y su enlace en el contenedor para el entorno de pruebas.
+
+**Notas — decisiones que conviene revisar:**
+1. **`prospects.full_name` era NOT NULL y se corrigio.** El esquema de T2 admitia
+   `capture_status = 'started'` (P1, el prospecto solo eligio metodo de captura) pero
+   exigia nombre desde el insert: ese estado era irrepresentable y el evento
+   `prospect.started` se quedaba sin entidad a la que apuntar. Se corrigio con migracion
+   nueva, sin tocar la de T2 ya commiteada; no cambia nombre ni tipo de columna, solo su
+   nulabilidad. Detectado porque `ProspectJourneyTest` fallaba con
+   `SQLSTATE[23000] ... Column 'full_name' cannot be null`.
+2. **`curp_hash` y `rfc_hash` se calculan con HMAC-SHA-256, no con SHA-256 a secas.**
+   El comentario de la migracion de T2 dice "SHA-256 determinista"; sigue siendo SHA-256
+   y sigue siendo determinista, pero con llave (`config('security.pii_hash_key')`, por
+   omision `APP_KEY`). Motivo: el espacio de CURP validas es pequeno y enumerable, asi
+   que un SHA-256 simple se revierte por fuerza bruta con solo obtener una copia de la
+   tabla. **Si el usuario prefiere SHA-256 sin llave, se revierte cambiando unicamente
+   `Infrastructure/Security/PiiHasher`.**
+3. **Los parametros del motor de reglas no vienen del diseno.** Los documentos de las
+   fases 1 a 3 exigen determinar tipo de credito y capacidad de pago, pero no fijan
+   cifras. Se implementaron como parametros en `Domain/Credit/CreditPolicy::default()`
+   —aforo 30 %, edad 18-74, ingresos minimos 3 000 / 8 000 / 15 000, techos
+   30 000 / 150 000 / 500 000, tasas 60 % / 36 % / 42 % anual, plazos 6-12-18-24-36— y
+   estan reunidos en una sola clase para que el area de riesgos los ajuste sin tocar el
+   algoritmo. **Son propuestas, no reglas del diseno: quedan a confirmacion del usuario.**
+4. **Puertos sin adaptador, a proposito.** `OcrService`, `IdentityValidator`, `CardIssuer`
+   y `NotificationSender` estan declarados y sin enlazar. Enlazar un adaptador falso aqui
+   daria por implementado algo que no lo esta; se hace en T4.
+**Notas — seguridad:**
+- `BUGS.md`: VUL-02 y VUL-04 pasan de Abierto a **En progreso**. VUL-02 tiene ya el
+  catalogo de plazos en el dominio (`Term`) y VUL-04 el enmascarado en el constructor de
+  `AuditEvent`; ninguno se declara Resuelto porque el endpoint (T10) y la bitacora
+  completa (T8) todavia no existen.
+- La bitacora no guarda la CURP ni siquiera enmascarada: identifica por `prospect_id` y
+  registra `has_curp`. El enmascarado exime a los booleanos, de modo que `has_rfc => true`
+  sigue siendo informacion util de auditoria sin transportar dato personal.
+- `AuditLogRecord` bloquea UPDATE y DELETE en el propio modelo (append-only), ademas de
+  no existir ninguna ruta que los invoque.
+
+---
+
 ## [2026-08-20 23:15] T2 — Migraciones de las 9 tablas (cierre)
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `T2: cierre`)
