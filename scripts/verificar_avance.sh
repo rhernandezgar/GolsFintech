@@ -72,6 +72,23 @@ php_files() { find "$1" -type f -name '*.php' 2>/dev/null | wc -l | tr -d ' '; }
 # Ejecuta artisan en backend/ y devuelve salida + codigo.
 artisan() { ( cd "$ROOT/backend" 2>/dev/null && php artisan "$@" ) 2>&1; }
 
+# Suite de PHPUnit en verde o en rojo. Manda el CODIGO DE SALIDA de php artisan
+# test, que es la senal canonica; la salida de texto solo se mira como respaldo,
+# con un patron sensible a mayusculas sobre la linea de resumen.
+#
+# Por que no se busca "fail" en la salida: la salida normal de php artisan test
+# (Collision) imprime el nombre de cada prueba, y hay pruebas que se llaman
+# "...can fail" o "...willFail" porque comprueban justo el camino de error. Un
+# grep -i por "fail" las confunde con un fallo y da la suite por roja estando
+# verde. Autorizado por el usuario (CLAUDE.md seccion 9).
+#
+#   $1 = codigo de salida de la corrida    $2 = su salida completa
+suite_failed() {
+  [ "$1" != "0" ] && return 0
+  printf '%s' "$2" | grep -qE "Tests:.*failed|FAILURES!" && return 0
+  return 1
+}
+
 HAS_PHP=0;  command -v php  >/dev/null 2>&1 && HAS_PHP=1
 HAS_NODE=0; command -v node >/dev/null 2>&1 && HAS_NODE=1
 HAS_NPM=0;  command -v npm  >/dev/null 2>&1 && HAS_NPM=1
@@ -341,9 +358,12 @@ grep -rqE "assertStatus\(403\)|assertForbidden" backend/tests 2>/dev/null \
   && ok "Hay prueba que exige 403 con rol insuficiente" || no "Sin prueba de 403 con rol insuficiente"
 
 if [ "$HAS_PHP" = "1" ] && grep -rqlE "assertStatus\(40[13]\)|assertForbidden|assertUnauthorized" backend/tests 2>/dev/null; then
-  OUT="$(artisan test --filter='Auth|Rbac|Role|Permission')"
-  printf '%s' "$OUT" | grep -qiE "FAIL|Errors" && no "php artisan test (auth/RBAC) con fallos" \
-                                               || ok "php artisan test (auth/RBAC) en verde"
+  OUT="$(artisan test --filter='Auth|Rbac|Role|Permission')"; RC=$?
+  if suite_failed "$RC" "$OUT"; then
+    no "php artisan test (auth/RBAC) con fallos (codigo de salida $RC)"
+  else
+    ok "php artisan test (auth/RBAC) en verde"
+  fi
   printf '%s\n' "$OUT" | tail -3 | sed 's/^/            /'
 fi
 endtask
@@ -375,9 +395,11 @@ else
 fi
 
 if [ "$HAS_PHP" = "1" ] && [ "$NUT" -gt 0 ]; then
-  OUT="$(artisan test --testsuite=Unit)"
-  if printf '%s' "$OUT" | grep -qiE "FAIL|Errors|No tests executed"; then
-    no "php artisan test --testsuite=Unit no esta en verde"
+  OUT="$(artisan test --testsuite=Unit)"; RC=$?
+  if suite_failed "$RC" "$OUT"; then
+    no "php artisan test --testsuite=Unit no esta en verde (codigo de salida $RC)"
+  elif printf '%s' "$OUT" | grep -qE "No tests executed"; then
+    no "php artisan test --testsuite=Unit no ejecuto ninguna prueba"
   else
     ok "php artisan test --testsuite=Unit en verde"
   fi

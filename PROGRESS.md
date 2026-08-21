@@ -5,6 +5,58 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 20:35] chore — Deteccion de suite en verde por codigo de salida
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `chore: la suite en verde se detecta...`)
+**Autorizacion:** el usuario autorizo expresamente modificar **solo** la deteccion de
+suite en verde de `scripts/verificar_avance.sh`, en T6 y en las verificaciones
+equivalentes de T5 (CLAUDE.md seccion 9). Ningun otro criterio del script se toco.
+**El falso positivo, reproducido:** el criterio anterior era
+`printf '%s' "$OUT" | grep -qiE "FAIL|Errors"` sobre la salida de `php artisan test`. La
+salida normal de esa orden (Collision) **imprime el nombre de cada prueba**, y T4 agrego
+pruebas que se llaman `the simulated ocr can fail to enqueue`,
+`the simulated card issuer can fail` y `the simulated notification sender can fail`,
+porque comprueban justo el camino de error. Un `grep -i` por "fail" las confunde con un
+fallo:
+
+```
+$ PAO_DISABLE=1 php artisan test --testsuite=Unit   # 107 passed, codigo de salida 0
+$ bash scripts/verificar_avance.sh
+  [FALTA]   php artisan test --testsuite=Unit no esta en verde
+  » T6: FALTA  (4 ok / 1 falta / 0 revisar)
+```
+
+**Por que no se habia visto:** este servidor tiene `laravel/pao`, que sustituye la salida
+de Collision por una linea JSON cuando detecta que quien ejecuta es un agente. Esa linea
+no lleva nombres de prueba, asi que en las corridas del asistente el criterio no se
+disparaba y T6 salia OK. En una corrida normal —sin agente, o con `PAO_DISABLE=1`— si se
+dispara. Es decir: **el script daba resultados distintos al usuario y al asistente sobre
+el mismo codigo**, que es exactamente lo que un medidor no debe hacer.
+**Cambios:**
+- `scripts/verificar_avance.sh`: funcion `suite_failed()` nueva junto al ayudante
+  `artisan()`. Manda el **codigo de salida** de `php artisan test`, que es la senal
+  canonica; como respaldo, un patron **sensible a mayusculas** sobre la linea de resumen
+  (`Tests:.*failed` o `FAILURES!`). Se aplica en T6 y en la verificacion de auth/RBAC de
+  T5. El mensaje de fallo ahora incluye el codigo de salida.
+- T6 conserva la comprobacion de "No tests executed", ahora como caso aparte y sensible a
+  mayusculas: una suite vacia tampoco acredita la tarea.
+**Verificacion:**
+- Suite verde sin pao: antes `T6: FALTA (4 ok / 1 falta)`; ahora `T6: OK (5 ok / 0 falta)`.
+- Suite verde con pao: `T6: OK`, igual que antes (no hay regresion).
+- Suite realmente roja (prueba temporal que falla a proposito, ya borrada): `[FALTA] php
+  artisan test --testsuite=Unit no esta en verde (codigo de salida 1)` en los dos
+  entornos, con y sin pao. El cambio no afloja el criterio.
+**Siguiente paso pendiente:** sin cambios — T5, autenticacion OAuth2 + PKCE + 2FA y RBAC
+de 5 roles (ver la entrada de T4).
+
+**Nota:** con `laravel/pao` activo la salida es una linea JSON (`{"result":"failed",...}`),
+que **no** casa con ninguno de los dos patrones de respaldo; ahi la deteccion se apoya
+enteramente en el codigo de salida, que es correcto en ambos casos. Si se quiere que el
+respaldo tambien cubra esa forma, habria que anadir el patron `"result":"failed"`, y eso
+requiere autorizacion aparte.
+
+---
+
 ## [2026-08-21 20:05] T4 — Los 7 puertos: interfaz + adaptador real + adaptador falso + enlaces
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `T4: ...`)
