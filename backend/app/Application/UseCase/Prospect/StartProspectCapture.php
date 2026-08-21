@@ -25,8 +25,7 @@ final readonly class StartProspectCapture
     public function __construct(
         private ProspectRepository $prospects,
         private AuditLogger $auditLogger,
-    ) {
-    }
+    ) {}
 
     public function execute(
         CaptureMethod $captureMethod,

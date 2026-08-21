@@ -19,9 +19,7 @@ final readonly class Term
     /** @var list<int> */
     public const AUTHORIZED_MONTHS = [6, 12, 18, 24, 36];
 
-    private function __construct(public int $months)
-    {
-    }
+    private function __construct(public int $months) {}
 
     public static function fromMonths(int $months): self
     {

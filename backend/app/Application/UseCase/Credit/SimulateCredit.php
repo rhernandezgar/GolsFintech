@@ -31,8 +31,7 @@ final readonly class SimulateCredit
         private ProspectRepository $prospects,
         private CreditRulesEngine $rulesEngine,
         private AuditLogger $auditLogger,
-    ) {
-    }
+    ) {}
 
     public function execute(
         Uuid $prospectPublicId,

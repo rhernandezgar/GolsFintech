@@ -37,8 +37,7 @@ final readonly class SimulatedIdentityValidator implements IdentityValidator
         private ?IdentityScenario $forcedScenario = null,
         private array $sandboxCurps = [],
         private ?DateTimeImmutable $reference = null,
-    ) {
-    }
+    ) {}
 
     public function validate(Prospect $prospect, ?IdentityDocument $document): IdentityValidationResult
     {
@@ -123,7 +122,7 @@ final readonly class SimulatedIdentityValidator implements IdentityValidator
 
         return sprintf(
             'VF-%s-%s',
-            ($this->reference ?? new DateTimeImmutable())->format('Y'),
+            ($this->reference ?? new DateTimeImmutable)->format('Y'),
             str_pad($digits, 6, '0')
         );
     }

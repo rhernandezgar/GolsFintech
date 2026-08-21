@@ -39,10 +39,10 @@ final class UploadIdentityDocumentTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->prospects = new InMemoryProspectRepository();
-        $this->documents = new InMemoryDocumentRepository();
-        $this->audit = new InMemoryAuditLogger();
-        $this->ocr = new FakeOcrService();
+        $this->prospects = new InMemoryProspectRepository;
+        $this->documents = new InMemoryDocumentRepository;
+        $this->audit = new InMemoryAuditLogger;
+        $this->ocr = new FakeOcrService;
     }
 
     private function useCase(): UploadIdentityDocument

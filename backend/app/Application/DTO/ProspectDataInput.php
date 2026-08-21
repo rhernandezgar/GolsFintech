@@ -24,6 +24,5 @@ final readonly class ProspectDataInput
         public ?string $businessType = null,
         public ?string $email = null,
         public ?string $phone = null,
-    ) {
-    }
+    ) {}
 }

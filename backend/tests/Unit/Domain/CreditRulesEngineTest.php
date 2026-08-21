@@ -28,7 +28,7 @@ final class CreditRulesEngineTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->engine = new CreditRulesEngine(CreditPolicy::default(), new AmortizationCalculator());
+        $this->engine = new CreditRulesEngine(CreditPolicy::default(), new AmortizationCalculator);
     }
 
     public function test_the_payment_capacity_is_thirty_percent_of_the_monthly_income(): void
@@ -174,7 +174,7 @@ final class CreditRulesEngineTest extends TestCase
 
         $this->expectException(InsufficientIncomeException::class);
 
-        (new CreditRulesEngine($policy, new AmortizationCalculator()))
+        (new CreditRulesEngine($policy, new AmortizationCalculator))
             ->evaluate(Money::fromDecimalString('3000.00'), 30, null, Term::fromMonths(6));
     }
 

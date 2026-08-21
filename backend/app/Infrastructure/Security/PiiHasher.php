@@ -19,9 +19,7 @@ namespace App\Infrastructure\Security;
  */
 final readonly class PiiHasher
 {
-    public function __construct(private string $key)
-    {
-    }
+    public function __construct(private string $key) {}
 
     public function hash(string $value): string
     {

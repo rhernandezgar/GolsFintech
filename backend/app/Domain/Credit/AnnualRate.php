@@ -15,9 +15,7 @@ final readonly class AnnualRate
 {
     private const SCALE = 10000;
 
-    private function __construct(public int $tenThousandths)
-    {
-    }
+    private function __construct(public int $tenThousandths) {}
 
     public static function fromTenThousandths(int $tenThousandths): self
     {

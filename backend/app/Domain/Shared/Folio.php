@@ -17,11 +17,10 @@ use InvalidArgumentException;
 final readonly class Folio
 {
     private const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
     private const RANDOM_LENGTH = 8;
 
-    private function __construct(public string $value)
-    {
-    }
+    private function __construct(public string $value) {}
 
     public static function generate(string $prefix, DateTimeImmutable $issuedAt): self
     {

@@ -36,8 +36,7 @@ final readonly class SimulatedOcrService implements OcrService
         private ?OcrScenario $forcedScenario = null,
         private array $scenarioMarkers = [],
         private bool $failEnqueue = false,
-    ) {
-    }
+    ) {}
 
     public function enqueueExtraction(IdentityDocument $document): string
     {

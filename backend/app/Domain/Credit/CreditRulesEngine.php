@@ -31,9 +31,8 @@ final class CreditRulesEngine
 {
     public function __construct(
         private readonly CreditPolicy $policy,
-        private readonly AmortizationCalculator $calculator = new AmortizationCalculator(),
-    ) {
-    }
+        private readonly AmortizationCalculator $calculator = new AmortizationCalculator,
+    ) {}
 
     public function evaluateForProspect(Prospect $prospect, Term $term): CreditOffer
     {

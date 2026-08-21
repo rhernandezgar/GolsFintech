@@ -13,8 +13,7 @@ final readonly class AuditContext
     public function __construct(
         public string $actor,
         public ?string $ipAddress = null,
-    ) {
-    }
+    ) {}
 
     /** Acciones ejecutadas por el propio sistema, sin usuario detras (worker, cron). */
     public static function system(string $component): self

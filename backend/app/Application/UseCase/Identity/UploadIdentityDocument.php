@@ -29,8 +29,7 @@ final readonly class UploadIdentityDocument
         private DocumentRepository $documents,
         private OcrService $ocrService,
         private AuditLogger $auditLogger,
-    ) {
-    }
+    ) {}
 
     public function execute(
         DocumentUploadInput $input,

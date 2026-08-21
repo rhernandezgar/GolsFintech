@@ -34,8 +34,7 @@ final readonly class CaptureProspectData
     public function __construct(
         private ProspectRepository $prospects,
         private AuditLogger $auditLogger,
-    ) {
-    }
+    ) {}
 
     public function execute(
         Uuid $prospectPublicId,

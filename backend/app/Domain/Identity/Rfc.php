@@ -45,9 +45,7 @@ final readonly class Rfc
      */
     private const GENERIC = ['XAXX010101000', 'XEXX010101000'];
 
-    private function __construct(public string $value, public bool $isLegalEntity)
-    {
-    }
+    private function __construct(public string $value, public bool $isLegalEntity) {}
 
     public static function fromString(string $value): self
     {

@@ -35,8 +35,7 @@ final class IdentityDocument
         private int $ocrAttempts,
         private ?string $ocrJobId,
         private ?DateTimeImmutable $processedAt,
-    ) {
-    }
+    ) {}
 
     public static function register(
         int $prospectId,

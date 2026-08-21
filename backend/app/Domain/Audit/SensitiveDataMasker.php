@@ -23,7 +23,7 @@ final class SensitiveDataMasker
         'secret', 'token', 'authorization', 'api_key', 'access_token'];
 
     /**
-     * @param array<array-key, mixed> $metadata
+     * @param  array<array-key, mixed>  $metadata
      * @return array<array-key, mixed>
      */
     public function mask(array $metadata): array

@@ -16,7 +16,7 @@ final class AmortizationCalculatorTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->calculator = new AmortizationCalculator();
+        $this->calculator = new AmortizationCalculator;
     }
 
     /**

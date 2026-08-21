@@ -36,11 +36,11 @@ final class AuditLogRecord extends Model
 
     protected static function booted(): void
     {
-        static::updating(static function (): void {
+        self::updating(static function (): void {
             throw new RuntimeException('La bitacora de auditoria es append-only: no admite modificaciones.');
         });
 
-        static::deleting(static function (): void {
+        self::deleting(static function (): void {
             throw new RuntimeException('La bitacora de auditoria es append-only: no admite borrados.');
         });
     }

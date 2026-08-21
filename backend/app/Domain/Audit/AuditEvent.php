@@ -33,7 +33,7 @@ final readonly class AuditEvent
         array $metadata = [],
         ?SensitiveDataMasker $masker = null,
     ) {
-        $this->metadata = ($masker ?? new SensitiveDataMasker())->mask($metadata);
+        $this->metadata = ($masker ?? new SensitiveDataMasker)->mask($metadata);
     }
 
     public function actor(): string

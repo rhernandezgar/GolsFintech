@@ -19,9 +19,7 @@ use Illuminate\Support\Facades\DB;
  */
 final readonly class EloquentAuditLogger implements AuditLogger
 {
-    public function __construct(private AuditChain $chain)
-    {
-    }
+    public function __construct(private AuditChain $chain) {}
 
     public function append(AuditEvent $event): void
     {

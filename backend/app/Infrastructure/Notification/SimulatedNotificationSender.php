@@ -26,8 +26,7 @@ final readonly class SimulatedNotificationSender implements NotificationSender
     public function __construct(
         private LoggerInterface $logger,
         private bool $fail = false,
-    ) {
-    }
+    ) {}
 
     public function send(Notification $notification): void
     {

@@ -19,6 +19,5 @@ final readonly class DocumentUploadInput
         public int $fileSizeBytes,
         public string $fileHash,
         public ?string $originalExtension = null,
-    ) {
-    }
+    ) {}
 }

@@ -24,8 +24,7 @@ final readonly class CreditOffer
         public Term $term,
         public Money $estimatedMonthlyPayment,
         public Money $totalPayable,
-    ) {
-    }
+    ) {}
 
     /** Costo financiero total del credito: lo que se paga por encima del capital. */
     public function totalInterest(): Money

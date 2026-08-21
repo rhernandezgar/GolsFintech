@@ -11,9 +11,7 @@ use App\Domain\Shared\Uuid;
 /** Adaptador de persistencia de la identificacion oficial sobre Eloquent. */
 final readonly class EloquentDocumentRepository implements DocumentRepository
 {
-    public function __construct(private IdentityDocumentMapper $mapper)
-    {
-    }
+    public function __construct(private IdentityDocumentMapper $mapper) {}
 
     public function save(IdentityDocument $document): IdentityDocument
     {

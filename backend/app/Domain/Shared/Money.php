@@ -21,9 +21,7 @@ final readonly class Money
 {
     private const SCALE = 2;
 
-    private function __construct(public int $cents, public string $currency)
-    {
-    }
+    private function __construct(public int $cents, public string $currency) {}
 
     public static function fromCents(int $cents, string $currency = 'MXN'): self
     {

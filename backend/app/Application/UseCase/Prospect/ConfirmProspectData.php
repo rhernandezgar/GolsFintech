@@ -24,8 +24,7 @@ final readonly class ConfirmProspectData
     public function __construct(
         private ProspectRepository $prospects,
         private AuditLogger $auditLogger,
-    ) {
-    }
+    ) {}
 
     public function execute(Uuid $prospectPublicId, AuditContext $context, DateTimeImmutable $now): Prospect
     {

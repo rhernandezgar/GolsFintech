@@ -28,8 +28,7 @@ final readonly class SimulatedCardIssuer implements CardIssuer
         private bool $fail = false,
         private int $validityYears = 3,
         private ?DateTimeImmutable $reference = null,
-    ) {
-    }
+    ) {}
 
     public function issue(int $customerId, int $creditLineId): IssuedCard
     {
@@ -43,7 +42,7 @@ final readonly class SimulatedCardIssuer implements CardIssuer
         // SHA-256 y no MD5/SHA-1 tambien aqui: la prohibicion no admite excepcion
         // por tratarse de codigo de simulacion (regla de seguridad 6).
         $seed = hash('sha256', sprintf('card:%d:%d', $customerId, $creditLineId));
-        $expiration = ($this->reference ?? new DateTimeImmutable())
+        $expiration = ($this->reference ?? new DateTimeImmutable)
             ->modify(sprintf('+%d years', $this->validityYears));
 
         return new IssuedCard(

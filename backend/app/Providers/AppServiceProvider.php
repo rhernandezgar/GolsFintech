@@ -33,7 +33,7 @@ final class AppServiceProvider extends ServiceProvider
         $this->app->singleton(CreditPolicy::class, static fn (): CreditPolicy => CreditPolicy::default());
         $this->app->singleton(CreditRulesEngine::class, static fn ($app): CreditRulesEngine => new CreditRulesEngine(
             $app->make(CreditPolicy::class),
-            new AmortizationCalculator(),
+            new AmortizationCalculator,
         ));
     }
 

@@ -23,8 +23,7 @@ final readonly class IdentityValidationResult
         public VerificationStatus $documentValidityStatus,
         public bool $fraudFlagged,
         public array $maskedProviderResponse = [],
-    ) {
-    }
+    ) {}
 
     /**
      * Solo se considera verificada la identidad si INE y RENAPO responden

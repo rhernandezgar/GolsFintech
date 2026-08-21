@@ -21,7 +21,7 @@ final class AuditChainTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->chain = new AuditChain();
+        $this->chain = new AuditChain;
     }
 
     private function event(string $entity = 'Prospect', array $metadata = ['step' => 'p1']): AuditEvent

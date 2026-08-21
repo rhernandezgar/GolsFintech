@@ -38,10 +38,10 @@ use InvalidArgumentException;
 final readonly class CreditPolicy
 {
     /**
-     * @param int $paymentCapacityPercent porcentaje del ingreso comprometible al mes
-     * @param array<string, Money> $minimumMonthlyIncome ingreso minimo por tipo de credito
-     * @param array<string, Money> $maximumAmount techo autorizado por tipo de credito
-     * @param array<string, AnnualRate> $annualRate tasa anual ordinaria por tipo de credito
+     * @param  int  $paymentCapacityPercent  porcentaje del ingreso comprometible al mes
+     * @param  array<string, Money>  $minimumMonthlyIncome  ingreso minimo por tipo de credito
+     * @param  array<string, Money>  $maximumAmount  techo autorizado por tipo de credito
+     * @param  array<string, AnnualRate>  $annualRate  tasa anual ordinaria por tipo de credito
      */
     public function __construct(
         public int $paymentCapacityPercent,

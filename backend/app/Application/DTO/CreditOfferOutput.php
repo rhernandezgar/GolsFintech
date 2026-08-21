@@ -24,8 +24,7 @@ final readonly class CreditOfferOutput
         public string $estimatedMonthlyPayment,
         public string $totalPayable,
         public string $currency,
-    ) {
-    }
+    ) {}
 
     public static function fromOffer(CreditOffer $offer): self
     {

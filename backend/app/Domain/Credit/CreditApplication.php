@@ -41,8 +41,7 @@ final class CreditApplication
         private ?Money $paymentCapacity,
         private ?string $rejectionReasonCode,
         private ?DateTimeImmutable $decidedAt,
-    ) {
-    }
+    ) {}
 
     public static function open(int $prospectId, ?int $identityValidationId, DateTimeImmutable $openedAt): self
     {

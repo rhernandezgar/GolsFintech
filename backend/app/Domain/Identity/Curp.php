@@ -35,9 +35,7 @@ final readonly class Curp
         'GR', 'GT', 'HG', 'JC', 'MC', 'MN', 'MS', 'NE', 'NL', 'NT', 'OC', 'PL', 'QR', 'QT',
         'SL', 'SP', 'SR', 'TC', 'TL', 'TS', 'VZ', 'YN', 'ZS'];
 
-    private function __construct(public string $value)
-    {
-    }
+    private function __construct(public string $value) {}
 
     public static function fromString(string $value): self
     {
@@ -135,7 +133,7 @@ final readonly class Curp
     /** Fecha de nacimiento deducida, util para contrastarla con la edad declarada. */
     public function birthDate(?DateTimeImmutable $today = null): ?DateTimeImmutable
     {
-        $today ??= new DateTimeImmutable();
+        $today ??= new DateTimeImmutable;
         $yymmdd = substr($this->value, 4, 6);
         $year = (int) substr($yymmdd, 0, 2);
 

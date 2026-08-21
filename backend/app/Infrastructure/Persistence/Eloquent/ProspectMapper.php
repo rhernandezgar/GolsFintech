@@ -24,9 +24,7 @@ use DateTimeImmutable;
  */
 final readonly class ProspectMapper
 {
-    public function __construct(private PiiHasher $hasher)
-    {
-    }
+    public function __construct(private PiiHasher $hasher) {}
 
     /** @return array<string, mixed> */
     public function toAttributes(Prospect $prospect): array

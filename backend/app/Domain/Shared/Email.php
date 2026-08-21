@@ -14,9 +14,7 @@ final readonly class Email
 {
     private const MAX_LENGTH = 254;
 
-    private function __construct(public string $value)
-    {
-    }
+    private function __construct(public string $value) {}
 
     public static function fromString(string $value): self
     {

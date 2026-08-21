@@ -55,8 +55,7 @@ final class Prospect
         private readonly CaptureMethod $captureMethod,
         private CaptureStatus $captureStatus,
         private ?DateTimeImmutable $privacyNoticeAcceptedAt,
-    ) {
-    }
+    ) {}
 
     /**
      * Alta del prospecto en P1. El aviso de privacidad se sella con la hora en que

@@ -27,8 +27,7 @@ final class CreditSimulation
         private SimulationStatus $simulationStatus,
         private readonly DateTimeImmutable $expiresAt,
         private ?DateTimeImmutable $decidedAt,
-    ) {
-    }
+    ) {}
 
     public static function propose(
         int $creditApplicationId,

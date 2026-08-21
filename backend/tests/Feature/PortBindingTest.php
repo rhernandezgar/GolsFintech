@@ -152,7 +152,7 @@ final class PortBindingTest extends TestCase
 
     public function test_a_test_double_can_replace_the_adapter_without_touching_the_use_case(): void
     {
-        $this->app->bind(OcrService::class, static fn (): OcrService => new FakeOcrService());
+        $this->app->bind(OcrService::class, static fn (): OcrService => new FakeOcrService);
 
         $this->assertInstanceOf(FakeOcrService::class, $this->app->make(OcrService::class));
         $this->assertInstanceOf(UploadIdentityDocument::class, $this->app->make(UploadIdentityDocument::class));

@@ -25,6 +25,6 @@ final readonly class Notification
         array $parameters = [],
         ?SensitiveDataMasker $masker = null,
     ) {
-        $this->parameters = ($masker ?? new SensitiveDataMasker())->mask($parameters);
+        $this->parameters = ($masker ?? new SensitiveDataMasker)->mask($parameters);
     }
 }

@@ -22,8 +22,7 @@ final readonly class EloquentProspectRepository implements ProspectRepository
     public function __construct(
         private ProspectMapper $mapper,
         private PiiHasher $hasher,
-    ) {
-    }
+    ) {}
 
     public function save(Prospect $prospect): Prospect
     {

@@ -21,7 +21,7 @@ final class SensitiveDataMaskerTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->masker = new SensitiveDataMasker();
+        $this->masker = new SensitiveDataMasker;
     }
 
     public function test_it_redacts_by_key_name(): void
