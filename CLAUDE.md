@@ -131,6 +131,30 @@ el encadenamiento SHA-256. **No se rediseña.** Append-only: sin UPDATE ni DELET
    detalle técnico solo en los registros del servidor.
 9. Endpoints autenticados por defecto; excepciones declaradas explícitamente.
 
+### 6.1 Llave de `PiiHasher` — se aparta del diseño documentado
+
+`curp_hash` y `rfc_hash` no se calculan con SHA-256 a secas, como dice el comentario de
+la migración de T2, sino con **HMAC-SHA-256** con llave
+(`Infrastructure/Security/PiiHasher`, llave en `config('security.pii_hash_key')`).
+
+**Por qué se aparta:** el espacio de CURP válidas es pequeño y enumerable, así que un
+SHA-256 sin llave se revierte por fuerza bruta con solo obtener una copia de la tabla —el
+escenario contra el que existe el cifrado de columna—. Con HMAC eso no es viable, y el
+hash sigue siendo SHA-256 y determinista, que es lo que la columna necesita. Aprobado por
+el usuario en T3.
+
+**La llave no se rota sin migración de datos.** El hash es determinista *respecto a esa
+llave*: si cambia, todo `curp_hash` y `rfc_hash` ya escrito deja de corresponder a su
+dato. Rotarla sin migrar deja las búsquedas por CURP y RFC en vacío, `existsWithCurp()`
+deja de detectar duplicados y un mismo prospecto puede darse de alta dos veces sin que el
+sistema lo note. **Rotarla exige recalcular todos los hashes**: descifrar `curp`/`rfc`,
+recalcular con la llave nueva y reescribir, en una migración transaccional.
+
+Por eso **la llave de hash no es `APP_KEY`**: `APP_KEY` se rota como operación normal y
+arrastraría los hashes. `PII_HASH_KEY` la toma como respaldo solo para no romper el
+entorno local; en producción se define aparte. **Vive en el vault, nunca en el `.env` de
+producción**, ni en el código ni en un commit.
+
 ## 7. Regla operativa de continuidad
 
 **Al iniciar sesión, lee `PROGRESS.md` y `BUGS.md` completos y contrasta su contenido

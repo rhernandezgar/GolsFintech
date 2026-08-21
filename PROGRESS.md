@@ -5,6 +5,71 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-21 19:05] T6 — Motor de reglas de credito con pruebas unitarias sin BD
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `T6: ...`)
+**Contexto:** El motor de reglas (`Domain/Credit`) se habia escrito ya dentro de T3, junto
+con el resto del nucleo, pero quedo sin cerrar: la politica de tasas era incoherente y una
+prueba unitaria seguia en rojo. T6 se cierra fuera de orden —antes que T4 y T5— porque el
+codigo que audita ya existia desde T3; lo que faltaba era la correccion y la cobertura de
+casos limite.
+**Cambios:**
+- `backend/app/Domain/Credit/CreditPolicy.php`: progresion de tasas DESCENDENTE conforme
+  mejora el perfil (microcredito 60.00 %, personal 28.50 %, negocio 24.00 %). La anterior
+  era 60 / 36 / 42, donde el tramo de mejor perfil salia mas caro que el intermedio.
+  La tasa personal queda **anclada al prototipo P5** de las Fases 2 y 3.
+- Invariante nuevo en el constructor de `CreditPolicy`
+  (`assertRatesDecreaseAsTheProfileImproves()`): microcredito > personal > negocio, o
+  `InvalidArgumentException` al construir. Una tabla de tasas incoherente no produce
+  ninguna excepcion por si sola —el motor calcula igual—, asi que sin este invariante el
+  error solo se ve leyendo las tres cifras juntas.
+- `backend/tests/Unit/Domain/CreditRulesEngineTest.php`: la asercion de tasa esperaba
+  `36.00` y quedo obsoleta con la correccion; ahora exige `28.50`. Ademas 7 pruebas
+  nuevas de casos limite:
+  - edad 17 y 75 rechazadas, 18 y 74 aceptadas (limites inclusivos de la politica);
+  - ingreso justo en el umbral de cada tramo (3 000 / 8 000 / 15 000) y un centavo por
+    debajo de cada uno, que debe caer al tramo anterior;
+  - monto por encima del techo de **los tres** tipos (30 000 / 150 000 / 500 000), con
+    ingresos elegidos para que la restriccion activa sea el techo y no el aforo;
+  - la tasa personal contra el prototipo P5 y su cobertura del monto de 35 000;
+  - la progresion descendente de las tres tasas;
+  - regresion exacta de la tabla anterior (60 / 36 / 42), que ahora debe ser rechazada.
+- Borrado del archivo vacio `HTTP` en la raiz del repositorio (0 bytes, sin seguimiento;
+  residuo de una redireccion de shell). No estaba versionado ni referenciado.
+**Verificacion:**
+- `php artisan test --testsuite=Unit` -> **84 pruebas, 84 aprobadas, 172 aserciones**
+  (antes: 77 pruebas, 76 aprobadas, 1 fallando).
+- `php artisan test` (suite completa) -> 105 pruebas, 105 aprobadas, 268 aserciones.
+- `bash scripts/verificar_avance.sh` -> **T6: OK (5 ok / 0 falta / 0 revisar)**; higiene
+  transversal con las 9 verificaciones en `[OK]`.
+- Prototipo P5 leido directamente de la Figura 6 de `docs/Fase2_Arquitectura_Diseno_Tecnico.docx`
+  (imagen incrustada, no texto): tipo credito simple, capacidad 4 800, monto 35 000, tasa
+  anual fija 28.5 %, CAT informativo 32.4 % sin IVA, plazo 18 meses, pago 2 430, total
+  43 740.
+**Siguiente paso pendiente:** T4 — Los 7 puertos con adaptador real, adaptador falso y
+enlaces. Faltan los adaptadores de `OcrService`, `IdentityValidator`, `CardIssuer` y
+`NotificationSender`, hoy declarados y sin enlazar en `AppServiceProvider::register()`,
+mas un doble de prueba por puerto y su enlace en el contenedor del entorno de pruebas.
+
+**Notas — decisiones que conviene revisar:**
+
+1. **El pago mensual y el CAT del prototipo P5 no salen de la formula de amortizacion.**
+   Con 35 000 a 18 meses y 28.5 % anual, el motor calcula pago mensual **2 412.25** y CAT
+   **32.53 %**; el prototipo muestra 2 430 y 32.4 %. La diferencia (17.75 al mes, 0.13
+   puntos de CAT) viene de que las cifras del mockup son ilustrativas y estan redondeadas,
+   no derivadas del sistema frances. **No se toco el calculo para hacerlo coincidir**: la
+   formula del motor es la correcta y ajustarla a un mockup seria falsear el calculo
+   financiero. Lo que se anclo al prototipo es la **tasa**, que es el parametro de
+   politica. Si la entrega academica exige que P5 muestre exactamente 2 430, lo que debe
+   corregirse es la imagen del documento, no `AmortizationCalculator`.
+2. **Las demas cifras de `CreditPolicy` siguen siendo propuestas sin fuente documental.**
+   Umbrales de ingreso, techos por tipo, aforo del 30 %, rango de edad y minimo de
+   originacion no aparecen en las Fases 1 a 3; el diseno solo exige *determinar* tipo de
+   credito y capacidad de pago. Estan reunidas en una sola clase para que el area de
+   riesgos las ajuste sin tocar el algoritmo.
+
+---
+
 ## [2026-08-21 14:30] T3 — Capas Domain / Application / Infrastructure
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `T3: ...`)
