@@ -88,11 +88,20 @@ final class ApiAccessControlTest extends TestCase
         // Regla de seguridad no negociable 9. La lista es cerrada a proposito:
         // una ruta nueva sin autenticacion rompe esta prueba y obliga a
         // declararla como excepcion de forma consciente.
+        // Autenticada no quiere decir solo "guard de usuario". Hay rutas cuyo
+        // llamante es un proceso y no una persona —el worker devolviendo el
+        // resultado de un OCR—: su credencial es un token de client_credentials
+        // y quien la exige es el middleware `client`. Sigue siendo autenticada,
+        // y por eso cuenta; lo que cambia es quien se autentica.
+        $authenticating = static fn (string $middleware): bool => $middleware === 'auth'
+            || str_starts_with($middleware, 'auth:')
+            || $middleware === 'client'
+            || str_starts_with($middleware, 'client:');
+
         $unauthenticated = collect(app('router')->getRoutes())
             ->filter(fn ($route): bool => str_starts_with($route->uri(), 'api/v1/'))
             ->reject(fn ($route): bool => collect($route->gatherMiddleware())
-                ->contains(fn ($middleware): bool => is_string($middleware)
-                    && ($middleware === 'auth' || str_starts_with($middleware, 'auth:'))))
+                ->contains(fn ($middleware): bool => is_string($middleware) && $authenticating($middleware)))
             ->map(fn ($route): string => implode('|', $route->methods()).' '.$route->uri())
             ->unique()
             ->sort()

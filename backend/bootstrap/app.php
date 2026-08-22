@@ -6,6 +6,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Laravel\Passport\Http\Middleware\EnsureClientIsResourceOwner;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -20,6 +21,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => EnsureRole::class,
             'read-only' => EnforceReadOnlyRole::class,
+
+            // Para las rutas que consume un proceso y no una persona: exige un
+            // token de client_credentials con el scope indicado.
+            'client' => EnsureClientIsResourceOwner::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

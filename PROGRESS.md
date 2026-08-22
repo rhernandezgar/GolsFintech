@@ -5,6 +5,103 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 12:05] T7 — Worker Node 24 + BullMQ, endpoint 202 y ciclo asincrono completo
+**Estado:** COMPLETADO — tercer y ultimo bloque de T7.
+**Commit:** ver `git log --oneline` (commit `T7: endpoint 202...`)
+**Bloques anteriores:** el productor de PHP y el worker de Node se commitearon aparte
+(`0d7b181`, `9a79085`) para no perderlos tras el corte de conexion.
+
+**Que se cerro en este bloque: la capa HTTP.**
+- `Api/IdentityDocumentController@store` — responde **202 Accepted** con
+  `tracking_id`, `ocr_status`, `attempt` y `status_url`. No espera al OCR.
+- `Api/IdentityDocumentController@show` — seguimiento por el identificador del 202.
+- `Internal/OcrResultController@store` — lo que llama el worker al terminar.
+- `Application/UseCase/Identity/RecordOcrOutcome` + `DTO/OcrOutcomeInput`.
+- `Http/Requests/Identity/{UploadIdentityDocumentRequest,RecordOcrOutcomeRequest}`.
+- Alias de middleware `client` (`EnsureClientIsResourceOwner`) y catalogo de scopes con
+  `ocr-result`.
+
+**Por que 202 y no 200.** El OCR lo hace otro proceso y puede reintentarse tres veces. Si
+este endpoint esperara al resultado, cada carga ocuparia un proceso de PHP-FPM durante
+segundos y una racha de subidas agotaria el pool (Fase 2, riesgo R-03). 202 es la
+respuesta honesta —«lo recibi, todavia no esta hecho»— y el identificador es como el
+cliente pregunta despues. La prueba `the_upload_answers_202_accepted_with_a_tracking_id`
+exige ademas que el estado devuelto sea `processing` y no `completed`: si alguien
+convirtiera esto en sincrono para «simplificar», se pone roja.
+
+**Tres decisiones de seguridad que no son adorno:**
+1. **El prospecto sale del usuario autenticado, nunca de un campo de la peticion.**
+   Aceptar un `prospect_id` del cliente es la forma clasica de IDOR (CWE-639). Asi no hay
+   objeto ajeno que nombrar. En el seguimiento, un documento de otro prospecto responde
+   **404 y no 403**: un 403 le confirmaria al que prueba identificadores que ese documento
+   existe.
+2. **Correlacion por `job_ref`.** El resultado tiene que corresponder al intento vigente
+   (`ocr_job_id`). Un resultado rezagado de un intento anterior se rechaza con 409 en vez
+   de pisar el estado actual. Y el callback es **idempotente**: repetir el aviso no
+   duplica eventos en la bitacora, comprobado contando filas.
+3. **La ruta interna la autentica un token de cliente, no de persona.** Un token de
+   usuario —aunque sea admin— recibe 401 ahi. Si bastara una sesion de persona, cualquiera
+   con cuenta podria inyectar el resultado de un OCR que nunca se ejecuto. El `reason` es
+   un codigo cerrado (`unreadable` | `exhausted`) y no texto libre: lo que manda el worker
+   acaba en la bitacora, y ahi no se vuelca la respuesta cruda de un tercero.
+
+**Verificacion (2026-08-22, en este servidor):**
+- **Ciclo completo en vivo, con el worker en modo HTTP.** Se levanto la API en
+  127.0.0.1:6060, se encolo un documento real con `OCR_DRIVER=bullmq` y se arranco el
+  worker con `BACKEND_ADAPTER=http` y un cliente de client_credentials. El worker pidio su
+  token, consumio el trabajo, llamo a `/api/v1/internal/ocr-results` y el documento paso a
+  `ocr_status=completed`, con `processed_at`, con el `ocr_result` guardado y con
+  `document.ocr_completed` en la bitacora. **Es el unico eslabon que ninguna prueba
+  automatizada cubre —la llamada HTTP real del worker— y por eso se comprobo a mano.**
+  Los datos de prueba se borraron despues, y **el cliente OAuth creado para la prueba se
+  revoco** porque su secreto quedo impreso en la sesion (regla 3).
+- `PAO_DISABLE=1 php artisan test` -> **268 pruebas aprobadas, 658 aserciones** (22
+  nuevas: 10 de carga, 10 del callback, 2 de contrato).
+- `npm test` en `worker/` -> 10 pruebas aprobadas.
+- `bash scripts/verificar_avance.sh` -> **T7: OK (10 ok / 0 falta)**.
+- `./vendor/bin/pint` -> limpio.
+
+**`BullMqContractTest`, que es la que sostiene el acoplamiento.** Encola desde PHP y hace
+que un `Worker` de BullMQ **de verdad** lo consuma, con `worker/tests/support/consumeOnce.mjs`.
+Comprobar que las claves quedan escritas solo probaria que PHP hace lo que PHP cree; lo que
+hace falta es que la libreria las entienda. Si una actualizacion de BullMQ cambia el
+formato interno, esta prueba se pone roja aqui y no en produccion con trabajos
+perdiendose en silencio. Se omite —no falla— si no hay Redis o `worker/node_modules`: una
+prueba que falla por el entorno acaba ignorandose.
+
+**Se amplio una prueba de T5, y conviene saber por que.**
+`ApiAccessControlTest::the_endpoints_are_authenticated_by_default` rechazaba toda ruta sin
+middleware `auth`/`auth:`. La ruta interna esta autenticada, pero con un token de
+client_credentials: el filtro ahora acepta tambien `client`/`client:`. **No se abrio la
+lista de excepciones**, que sigue siendo las mismas cuatro rutas; se corrigio la
+definicion de «autenticada», que era mas estrecha que la regla 9.
+
+**Marcado en `SECURITY_CHECKLIST.md`:** **VUL-01 pasa a Implementado**, con la prueba que
+el propio control pedia (`an_executable_renamed_as_an_image_is_rejected`).
+
+**Un [REVISAR] nuevo del script, que se deja como esta y se explica.** La verificacion de
+T10 marca «3 uso(s) de getMessage()/getTraceAsString() en backend/app/Http». Los tres son
+de este bloque y ya estan revisados: **dos van al registro del servidor** y no salen de
+ahi; **el tercero si viaja al cliente**, en el `catch (DocumentUploadRejected)` del
+controlador de carga. Es deliberado y es seguro hoy porque esa excepcion solo se lanza en
+`UploadedDocumentStore` con mensajes redactados a mano para el usuario final («El tipo de
+archivo no esta permitido.»), sin tipo detectado ni limite concreto. **La fragilidad esta
+en que depende de una convencion**: si alguien lanzara esa excepcion con el mensaje de otra
+excepcion dentro, el detalle tecnico saldria al cliente. El script hace bien en pedir que
+se mire. No se toca el script (seccion 9) y queda anotado aqui para T10, que es donde se
+normalizan los errores genericos.
+
+**Siguiente paso pendiente:** T8 — bitacora de auditoria append-only con encadenamiento
+SHA-256 y el comando `audit:verify-chain`. Segun el script faltan dos verificaciones: que
+el comando exista y una prueba que compruebe la deteccion de manipulacion. El usuario dijo
+que corre la auditoria antes de T8.
+
+**Nota de entorno:** la verificacion de T1 (`curl -I http://127.0.0.1:6060`) sale en
+`[FALTA]` porque el servidor de desarrollo se detuvo al terminar la prueba en vivo. No es
+una regresion: se levanta con `php artisan serve --host=127.0.0.1 --port=6060`.
+
+---
+
 ## [2026-08-22 11:20] T7 (parcial 2/3) — Worker de Node: consume, reintenta y distingue el error definitivo
 **Estado:** EN PROGRESO — segundo bloque de T7. **T7 sigue sin terminar:** falta la capa
 HTTP (endpoint 202, consulta de seguimiento y callback del worker) y sus pruebas.

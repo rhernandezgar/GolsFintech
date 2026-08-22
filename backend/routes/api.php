@@ -5,10 +5,12 @@ declare(strict_types=1);
 use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\CreditApplicationController;
+use App\Http\Controllers\Api\IdentityDocumentController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RefreshTokenController;
 use App\Http\Controllers\Auth\SessionController;
+use App\Http\Controllers\Internal\OcrResultController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -54,6 +56,16 @@ Route::middleware('auth:api')->group(function (): void {
     // ruta: que un rol de solo lectura no escriba es una propiedad del rol, y
     // una ruta nueva que olvidara declararlo naceria desprotegida.
     Route::middleware('read-only')->group(function (): void {
+        // P3. La carga responde 202 Accepted en cuanto encola: no espera al OCR
+        // (Fase 2, Figura 2a). El identificador que devuelve es con el que se
+        // consulta despues el estado en la ruta de abajo.
+        Route::post('/identity-documents', [IdentityDocumentController::class, 'store'])
+            ->middleware('throttle:10,1')
+            ->name('identity-documents.store');
+
+        Route::get('/identity-documents/{identityDocument}', [IdentityDocumentController::class, 'show'])
+            ->name('identity-documents.show');
+
         Route::get('/credit-applications/{creditApplication}', [CreditApplicationController::class, 'show'])
             ->name('credit-applications.show');
 
@@ -67,4 +79,17 @@ Route::middleware('auth:api')->group(function (): void {
             ->middleware('can:'.Permission::ReadAuditLog->value)
             ->name('audit-logs.index');
     });
+});
+
+/*
+| Ruta interna: la llama el worker, no una persona.
+|
+| No entra en el grupo de `auth:api` porque su credencial es otra: un token de
+| client_credentials con el scope 'ocr-result', que es lo que comprueba el
+| middleware `client`. Sigue siendo autenticada (regla 9); lo que cambia es
+| quien se autentica.
+*/
+Route::middleware('client:ocr-result')->prefix('internal')->group(function (): void {
+    Route::post('/ocr-results', [OcrResultController::class, 'store'])
+        ->name('internal.ocr-results.store');
 });

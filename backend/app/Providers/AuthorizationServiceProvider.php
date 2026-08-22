@@ -111,6 +111,15 @@ final class AuthorizationServiceProvider extends ServiceProvider
             new DateInterval('P'.$oauth['refresh_token_ttl_days'].'D')
         );
 
+        // Catalogo de scopes. El unico que existe hoy es el que usa el worker
+        // para devolver el resultado del OCR: un token de client_credentials no
+        // debe poder hacer nada mas que eso, y sin catalogo un scope pedido a
+        // mano no significaria nada. La SPA no pide scopes: opera con los
+        // permisos del usuario, que es otra capa distinta.
+        Passport::tokensCan([
+            'ocr-result' => 'Devolver al backend el resultado de una extraccion OCR',
+        ]);
+
         // El secreto de los clientes lo hashea Passport 13 siempre, sin
         // opcion de guardarlo en claro: una copia de oauth_clients no basta
         // para suplantar a un cliente confidencial. La SPA, ademas, no tiene
