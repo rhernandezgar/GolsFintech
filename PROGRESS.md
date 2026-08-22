@@ -5,6 +5,59 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 09:10] chore — El respaldo de suite_failed() cubre tambien el formato de pao
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `chore: el respaldo de suite_failed()...`)
+**Autorizacion:** el usuario autorizo expresamente anadir el patron `"result":"failed"` al
+respaldo de `suite_failed()` en `scripts/verificar_avance.sh`. Ningun otro criterio del
+script se toco (CLAUDE.md seccion 9).
+
+**Por que, en palabras del usuario:** aunque el codigo de salida ya cubre el caso, un
+respaldo que no funciona bajo pao es un respaldo falso, y conviene que sea consistente en
+ambos entornos.
+
+**Comprobado antes de escribir el cambio.** No se dio por supuesto el formato: `pint` emite
+`"result":"fail"` y `phpunit` bajo pao podia hacer lo mismo. Se provoco un fallo real con
+una prueba temporal:
+
+```
+$ php artisan test --filter=TempFailingTest          # con pao
+{"tool":"phpunit","result":"failed","tests":1,"passed":0,...}
+$ echo $?
+1
+$ PAO_DISABLE=1 php artisan test --filter=TempFailingTest
+  Tests:    1 failed (1 assertions)
+$ echo $?
+1
+```
+
+El patron que pidio el usuario —`"result":"failed"`— es exactamente el que emite pao. El
+codigo de salida es 1 en ambos entornos, de modo que la comprobacion principal ya
+funcionaba; lo que no funcionaba era el respaldo, que solo buscaba `Tests:.*failed` y
+`FAILURES!`, ninguno de los cuales aparece en la linea JSON de pao.
+
+**Cambio:** una sola alternativa mas en el `grep -qE` de `suite_failed()`, mas el
+comentario que explica por que hay dos formatos que cubrir.
+
+**Verificacion — los cuatro casos, con el codigo de salida forzado a 0 para aislar el
+respaldo del criterio principal:**
+
+| Salida | Suite | Respaldo |
+|---|---|---|
+| pao (JSON) | roja | detecta fallo |
+| Collision | roja | detecta fallo |
+| pao (JSON) | verde | no dispara |
+| Collision | verde | no dispara |
+
+Sin falso positivo en verde: la linea de una corrida verde de pao lleva `"result":"passed"`
+y no incluye la clave `failed`, asi que el patron no la toca.
+
+- `bash -n scripts/verificar_avance.sh` -> sin errores de sintaxis.
+- `bash scripts/verificar_avance.sh` -> T5 y T6 siguen en OK; ningun cambio en los totales.
+- La prueba temporal `tests/Unit/TempFailingTest.php` se elimino; no entra en el commit.
+
+**Siguiente paso pendiente:** sin cambios — T7, worker de Node 24 con BullMQ.
+
 ## [2026-08-21 21:35] T5 — Autenticacion OAuth2 + PKCE + 2FA y RBAC de 5 roles
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `T5: ...`)

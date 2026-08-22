@@ -85,7 +85,14 @@ artisan() { ( cd "$ROOT/backend" 2>/dev/null && php artisan "$@" ) 2>&1; }
 #   $1 = codigo de salida de la corrida    $2 = su salida completa
 suite_failed() {
   [ "$1" != "0" ] && return 0
-  printf '%s' "$2" | grep -qE "Tests:.*failed|FAILURES!" && return 0
+  # Respaldo por si el codigo de salida se pierde (una tuberia, un envoltorio).
+  # Cubre los dos formatos de salida que produce este servidor: el de Collision
+  # —"Tests: 1 failed" o "FAILURES!"— y el JSON de laravel/pao, que sustituye a
+  # Collision cuando quien ejecuta es un agente y no imprime ninguno de los dos.
+  # Sin el patron de pao el respaldo no se dispararia nunca en las corridas del
+  # asistente: seria un respaldo falso, y daria resultados distintos al usuario
+  # y al asistente sobre el mismo codigo.
+  printf '%s' "$2" | grep -qE "Tests:.*failed|FAILURES!|\"result\":\"failed\"" && return 0
   return 1
 }
 
