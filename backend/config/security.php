@@ -25,11 +25,12 @@ return [
     | Segundo factor (TOTP, RFC 6238)
     |---------------------------------------------------------------------------
     |
-    | El algoritmo por defecto es SHA-256 y no el SHA-1 habitual, porque la
-    | regla de seguridad no negociable 6 prohibe SHA-1 para cualquier proposito
-    | de seguridad. Vease el comentario de Infrastructure/Security/
-    | TotpAuthenticator: el coste es de compatibilidad con los autenticadores
-    | que ignoran el parametro algorithm del URI otpauth.
+    | El algoritmo por defecto es SHA-256 y no el SHA-1 habitual. No porque
+    | HMAC-SHA-1 sea inseguro —no lo es: los ataques de colision contra SHA-1 no
+    | se trasladan a HMAC, CLAUDE.md 6.3—, sino por higiene: no dejar el literal
+    | `sha1` en el arbol. El coste es de compatibilidad con los autenticadores
+    | que ignoran el parametro algorithm del URI otpauth, Google Authenticator
+    | entre ellos. CLAUDE.md 6.4 explica cuando hay que reevaluar esto.
     |
     | La ventana admite un paso hacia atras y otro hacia adelante para absorber
     | el desfase de reloj del telefono. Subirla amplia la vida util de un codigo

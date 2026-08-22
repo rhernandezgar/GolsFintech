@@ -14,16 +14,22 @@ use InvalidArgumentException;
  * un HMAC con truncamiento dinamico definido en la norma: no hay criptografia
  * propia que inventar, solo RFC 4226 (HOTP) y RFC 6238 (TOTP) aplicados.
  *
- * ATENCION — algoritmo por defecto SHA-256, no SHA-1:
- * la implementacion habitual de TOTP usa HMAC-SHA-1, pero la regla de seguridad
- * no negociable 6 de este proyecto prohibe SHA-1 para cualquier proposito de
- * seguridad. RFC 6238 §1.2 contempla expresamente SHA-256 y SHA-512, y el
+ * ATENCION — algoritmo por defecto SHA-256, no SHA-1 (CLAUDE.md 6.4):
+ * la implementacion habitual de TOTP usa HMAC-SHA-1. Conviene ser exacto sobre
+ * el motivo del cambio: **HMAC-SHA-1 no seria inseguro aqui**. La seguridad de
+ * HMAC no descansa en la resistencia a colisiones de la funcion interna, y los
+ * ataques conocidos contra SHA-1 no se trasladan a HMAC-SHA-1 (CLAUDE.md 6.3).
+ * SHA-256 se elige por higiene —no dejar el literal `sha1` en el arbol—, no
+ * para corregir una debilidad. RFC 6238 §1.2 lo contempla expresamente, y el
  * parametro `algorithm=SHA256` del URI otpauth:// lo transmite al autenticador.
- * El coste es de compatibilidad: algunas aplicaciones —Google Authenticator
- * entre ellas— ignoran ese parametro y calculan siempre con SHA-1, de modo que
- * mostrarian codigos que este servidor rechaza. Aegis, FreeOTP y 1Password si
- * lo respetan. El algoritmo queda en configuracion por si el operador necesita
- * decidir otra cosa con el criterio a la vista.
+ *
+ * El coste es de compatibilidad y es serio: muchas aplicaciones —Google
+ * Authenticator entre ellas— ignoran ese parametro y calculan siempre con
+ * SHA-1, de modo que mostrarian codigos que este servidor rechaza sin ningun
+ * mensaje que lo explique. Aegis, FreeOTP y 1Password si lo respetan. Por eso
+ * el algoritmo vive en configuracion: si el proyecto llega a tener usuarios
+ * reales hay que reevaluar la decision, porque un 2FA que la mayoria no puede
+ * usar empuja a desactivarlo. Cambiarlo invalida los secretos ya emitidos.
  */
 final class TotpAuthenticator
 {

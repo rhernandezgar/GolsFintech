@@ -47,10 +47,11 @@ final class LoginController extends Controller
         // Limite por correo y por IP a la vez: por correo frena el ataque a una
         // cuenta concreta desde muchas direcciones, y por IP frena el barrido
         // de muchas cuentas desde una sola (RS-10).
-        // SHA-256 y no SHA-1, aunque aqui solo se trate de derivar una clave
-        // de contador: la regla de seguridad no negociable 6 no admite
-        // excepciones por uso "poco importante", y las excepciones son
-        // exactamente lo que hace que un algoritmo prohibido siga vivo.
+        // SHA-256 y no SHA-1: derivar un identificador es justo uno de los usos
+        // que la regla de seguridad no negociable 6 prohibe para SHA-1 como
+        // funcion de hash, porque depende de que dos entradas distintas no
+        // compartan resultado. Aqui una colision haria que dos cuentas
+        // compartieran contador de intentos.
         $throttleKey = hash('sha256', mb_strtolower($credentials['email']).'|'.$request->ip());
 
         if (RateLimiter::tooManyAttempts($throttleKey, maxAttempts: 5)) {

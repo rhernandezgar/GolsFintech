@@ -101,9 +101,11 @@ final class TotpAuthenticatorTest extends TestCase
      * el `algorithm` de config/security.php seria una mentira.
      *
      * Se comprueba con SHA-512 y no con el SHA-1 del tercer juego de vectores
-     * de la norma porque la regla de seguridad no negociable 6 prohibe SHA-1
-     * en este proyecto, tambien en las pruebas: dejarlo escrito aqui bastaria
-     * para que la verificacion de higiene lo encontrara, y con razon.
+     * de la norma. No porque usar SHA-1 dentro de HMAC fuese inseguro
+     * —no lo es, CLAUDE.md 6.3—, sino porque el literal `sha1` escrito aqui
+     * dispararia la verificacion de higiene #2 del script, que no distingue el
+     * hash pelado del HMAC. Los vectores SHA-512 acreditan exactamente lo
+     * mismo: que el parametro `algorithm` se respeta.
      */
     #[DataProvider('rfc6238Sha512Vectors')]
     #[Test]

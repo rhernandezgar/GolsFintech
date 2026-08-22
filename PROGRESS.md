@@ -5,6 +5,61 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 09:40] chore — La regla 6 distingue SHA-1 como hash de HMAC-SHA-1
+**Estado:** completado
+**Commit:** ver `git log --oneline` (commit `chore: la regla 6 distingue...`)
+**Origen:** correccion del usuario. La formulacion anterior —«Prohibidos MD5 y SHA-1 para
+cualquier proposito de seguridad»— era demasiado amplia y criptograficamente imprecisa.
+
+**El fondo del asunto.** La resistencia a colisiones de SHA-1 esta rota (SHAttered 2017;
+prefijo elegido 2020), pero la seguridad de HMAC no descansa en esa propiedad, sino en que
+la funcion se comporte como pseudoaleatoria con la llave. Los ataques conocidos **no se
+trasladan a HMAC-SHA-1**, que NIST SP 800-131A mantiene admitido para autenticacion de
+mensajes. Prohibirlo por el nombre confundia el algoritmo con el modo de uso.
+
+**Cambios en `CLAUDE.md`:**
+- Regla 6 reformulada: prohibido SHA-1 **como funcion de hash** (integridad, firmas,
+  huellas de documento, derivacion de claves o identificadores). Remite a 6.3.
+- **Seccion 6.3 nueva** — la distincion, con el porque de cada lado y la consecuencia
+  practica: `sha1($x)` nunca; `hash_hmac('sha1', $x, $key)` aceptable si lo impone la
+  interoperabilidad con un tercero. Hoy no hay ninguno en el proyecto.
+- **Seccion 6.4 nueva** — el compromiso operativo del TOTP.
+
+**Aviso registrado en 6.3, no resuelto:** la verificacion #2 de `verificar_avance.sh`
+busca `sha1(` y tambien `'sha1'` / `"sha1"`, de modo que **marcaria `hash_hmac('sha1', ...)`
+como infraccion aunque la regla nueva lo admita**. Hoy no molesta porque no hay ningun
+HMAC-SHA-1 en el codigo, y por eso no se toca el script: la seccion 9 exige avisar al
+usuario y dejarle la decision. Queda escrito para quien se lo encuentre.
+
+**El TOTP sigue en SHA-256, como pidio el usuario**, pero el motivo se corrige en los
+cuatro sitios que citaban la redaccion antigua: no se cambio a SHA-256 porque HMAC-SHA-1
+fuese inseguro —no lo es—, sino por higiene, para no dejar el literal `sha1` en el arbol.
+Decirlo de otro modo seria justificar una decision correcta con un argumento falso.
+Ficheros: `Infrastructure/Security/TotpAuthenticator`, `config/security.php`,
+`Auth/LoginController` y `TotpAuthenticatorTest`.
+
+**VUL-10 anotado, no reescrito** (`BUGS.md`): el hallazgo **se mantiene** bajo la redaccion
+nueva, porque `sha1()` es hash pelado y derivar un identificador depende justo de la
+resistencia a colisiones que SHA-1 ya no tiene. Lo unico que cambia es que cita otra parte
+de la regla. Se anadio la nota fechada; no se borro nada.
+
+**Compromiso operativo del TOTP, documentado en 6.4 para que no se pierda:** Google
+Authenticator ignora el parametro `algorithm` del URI otpauth y calcula siempre con SHA-1,
+de modo que mostraria codigos que este servidor rechaza, sin mensaje que lo explique.
+Aegis, FreeOTP y 1Password si lo respetan. **Si el proyecto llega a tener usuarios reales
+hay que reevaluar la decision** —no por seguridad, sino porque un 2FA que la mayoria no
+puede usar con la aplicacion que ya tiene instalada empuja a desactivarlo, a pedir
+excepciones o a apuntar el codigo en cualquier sitio—. El algoritmo esta en
+`config('security.totp.algorithm')` para que el cambio sea de configuracion; **cambiarlo
+invalida los secretos ya emitidos**, que habria que volver a dar de alta.
+
+**Verificacion:**
+- `PAO_DISABLE=1 php artisan test` -> 246 aprobadas, 587 aserciones. Sin cambios de
+  comportamiento: solo comentarios y documentacion.
+- `./vendor/bin/pint --test` -> `passed`.
+
+**Siguiente paso pendiente:** sin cambios — T7, worker de Node 24 con BullMQ.
+
 ## [2026-08-22 09:10] chore — El respaldo de suite_failed() cubre tambien el formato de pao
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `chore: el respaldo de suite_failed()...`)

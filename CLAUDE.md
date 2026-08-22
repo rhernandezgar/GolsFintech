@@ -124,8 +124,10 @@ el encadenamiento SHA-256. **No se rediseña.** Append-only: sin UPDATE ni DELET
    Verificar `.gitignore` antes de cada commit.
 4. Toda validación del cliente se **replica obligatoriamente en el servidor**.
 5. Consultas mediante ORM o sentencias preparadas; **nada de SQL concatenado**.
-6. **Argon2id** para contraseñas. **Prohibidos MD5 y SHA-1** para cualquier propósito de
-   seguridad (SHA-256 sí, para integridad de la bitácora y de documentos).
+6. **Argon2id** para contraseñas. **Prohibidos MD5 y SHA-1 como función de hash**: nada de
+   integridad, firmas, huellas de documento ni derivación de claves o identificadores con
+   ellos (SHA-256 sí, para integridad de la bitácora y de documentos). La prohibición es
+   sobre la función de hash, **no sobre HMAC**: véase 6.3.
 7. Ninguna tarea se marca como terminada si sus pruebas no pasan.
 8. Mensajes de error genéricos al cliente (sin traza, sin nombres de tabla/columna);
    detalle técnico solo en los registros del servidor.
@@ -193,6 +195,61 @@ todavía no lo cubre, se dice explícitamente y se nombra la prueba que lo acred
   **continua entre ambos archivos** y ningún número se reutiliza. VUL-01 a VUL-08 son
   controles preventivos (Fase 3 §3.4, redactados como escenario ilustrativo, no como
   análisis de este código); VUL-09 en adelante son hallazgos verificados.
+
+### 6.3 SHA-1 como función de hash frente a HMAC-SHA-1
+
+La regla 6 prohíbe SHA-1 **como función de hash**. No prohíbe **HMAC-SHA-1**, y la
+distinción es criptográfica, no una excepción de conveniencia.
+
+**Por qué SHA-1 pelado está prohibido.** Su resistencia a colisiones está rota en la
+práctica: SHAttered (2017) produjo dos PDF distintos con el mismo hash, y el ataque de
+prefijo elegido (2020) lo abarató hasta hacerlo asequible. Todo uso que dependa de que dos
+entradas distintas no puedan compartir hash —integridad de la bitácora, huella de un
+documento, una firma, derivar una clave o un identificador— queda comprometido.
+
+**Por qué HMAC-SHA-1 es otra cosa.** La seguridad de HMAC no descansa en la resistencia a
+colisiones de la función interna, sino en que se comporte como una función pseudoaleatoria
+con la llave. Los ataques de colisión conocidos contra SHA-1 **no se trasladan a
+HMAC-SHA-1**, que sigue sin romperse y que NIST SP 800-131A mantiene admitido para
+autenticación de mensajes. Prohibirlo por el nombre sería confundir el algoritmo con el
+modo en que se usa.
+
+**Qué significa esto en la práctica:** `sha1($x)` no se escribe nunca;
+`hash_hmac('sha1', $x, $key)` es aceptable cuando lo imponga la interoperabilidad con un
+tercero. No hay hoy ningún uso de HMAC-SHA-1 en el proyecto, y no se introduce uno sin una
+razón de interoperabilidad concreta: pudiendo elegir, se elige SHA-256.
+
+**Aviso sobre la verificación #2 de `scripts/verificar_avance.sh`.** Su grep busca
+`sha1(` y también `'sha1'` / `"sha1"`, de modo que marcaría `hash_hmac('sha1', ...)` como
+infracción aunque esta sección lo admita. Hoy no molesta porque no hay ningún HMAC-SHA-1 en
+el código. **Si alguna vez hace falta introducir uno, hay que avisar al usuario de que el
+script lo marcará y dejar que él decida si se ajusta** (sección 9): el asistente no cambia
+ese criterio por su cuenta.
+
+### 6.4 TOTP con SHA-256 — compromiso operativo que hay que reevaluar
+
+El segundo factor (`Infrastructure/Security/TotpAuthenticator`, T5) usa **HMAC-SHA-256** y
+no el HMAC-SHA-1 habitual en TOTP. RFC 6238 §1.2 contempla expresamente SHA-256, y el
+parámetro `algorithm=SHA256` del URI `otpauth://` se lo comunica al autenticador.
+
+Conviene ser preciso sobre el motivo, ahora que 6.3 fija la distinción: **HMAC-SHA-1 no
+habría sido inseguro aquí.** La elección de SHA-256 es de higiene —no dejar el literal
+`sha1` en el árbol ni discutir caso por caso—, no una corrección de una debilidad real.
+
+**El costo es de compatibilidad, y es serio.** Muchos autenticadores ignoran el parámetro
+`algorithm` y calculan siempre con SHA-1, **Google Authenticator entre ellos**: mostrarían
+códigos que este servidor rechaza, sin ningún mensaje que explique por qué. Aegis, FreeOTP
+y 1Password sí lo respetan.
+
+**Por eso, si el proyecto llega a tener usuarios reales, la decisión se reevalúa.** El
+motivo no es de seguridad: es que un segundo factor que la mayoría de la gente no puede
+usar con la aplicación que ya tiene instalada empuja a desactivarlo, a pedir excepciones o
+a apuntar el código en cualquier sitio. Un 2FA con SHA-1 que todo el mundo usa protege más
+que uno con SHA-256 que la gente rodea. El algoritmo vive en
+`config('security.totp.algorithm')` precisamente para que ese cambio sea de configuración
+y no de código; cambiarlo **invalida los secretos ya dados de alta**, que habría que
+volver a emitir.
+
 
 ## 7. Regla operativa de continuidad
 
