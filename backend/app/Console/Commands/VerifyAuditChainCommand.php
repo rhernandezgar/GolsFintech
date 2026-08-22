@@ -39,15 +39,10 @@ final class VerifyAuditChainCommand extends Command
     /** Tope de rupturas que se listan: mas alla, el detalle deja de ayudar. */
     private const MAX_REPORTED_BREAKS = 20;
 
-    // Una sola cadena concatenada y no la firma multilinea habitual de Laravel: la
-    // verificacion 8 de scripts/verificar_avance.sh descarta las cadenas de texto
-    // linea a linea, de modo que una cadena abierta en una linea y cerrada en otra
-    // deja a las de en medio pareciendo identificadores en espanol. El script no se
-    // toca (CLAUDE.md seccion 9): se escribe el codigo de forma que se pueda auditar.
-    protected $signature = 'audit:verify-chain '
-        .'{--expect-tip= : Hash que debe tener el ultimo registro (ancla externa contra el truncado)} '
-        .'{--chunk=500 : Registros por pagina al recorrer la bitacora} '
-        .'{--json : Salida en JSON para consumo automatico}';
+    protected $signature = 'audit:verify-chain
+                            {--expect-tip= : Hash que debe tener el ultimo registro (ancla externa contra el truncado)}
+                            {--chunk=500 : Registros por pagina al recorrer la bitacora}
+                            {--json : Salida en JSON para consumo automatico}';
 
     protected $description = 'Verifica el encadenamiento SHA-256 de la bitacora y termina en codigo distinto de cero si esta rota';
 

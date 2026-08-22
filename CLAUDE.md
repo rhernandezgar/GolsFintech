@@ -251,6 +251,66 @@ y no de código; cambiarlo **invalida los secretos ya dados de alta**, que habr�
 volver a emitir.
 
 
+### 6.5 Qué detecta la cadena de la bitácora y qué no — riesgo residual aceptado
+
+El encadenamiento SHA-256 de `audit_logs` no protege contra todo, y la diferencia entre lo
+que detecta y lo que no es una propiedad del diseño, no un defecto de la implementación.
+Se escribe aquí porque un control cuyo alcance no está dicho se acaba usando como si no
+tuviera límites.
+
+**Lo que detecta.** `audit:verify-chain` comprueba dos invariantes por registro: que su
+`previous_hash` sea el `current_hash` del que lo precede, y que su hash recalculado
+coincida con el almacenado. Con las dos se detecta cualquier **manipulación parcial**:
+
+- alterar el contenido de un registro —incluidos `ip_address` y `metadata`, que están
+  dentro del material del hash precisamente por ser lo que un atacante querría retocar—;
+- borrar un registro intermedio, o el primero;
+- insertar un registro entre dos existentes, **aunque el atacante calcule bien los hashes
+  del que inserta**: no puede arreglar al sucesor sin rehacer todo el tramo posterior.
+
+Hace falta comprobar las dos. Con solo el recálculo de contenido se detecta la alteración
+y se escapan el borrado y la inserción, porque en esos dos casos cada fila superviviente
+sigue siendo coherente consigo misma; lo que cambia es la costura entre registros.
+
+**Lo que NO detecta, y es lo que hay que tener presente:**
+
+1. **El truncado del final.** Si se borran los últimos registros, lo que queda sigue
+   siendo una cadena perfectamente coherente. No hay nada dentro de la tabla que diga
+   cuántos registros debería haber.
+2. **La reescritura completa del tramo final.** El hash **no lleva llave** y el material
+   es público, así que quien tenga escritura sobre la tabla puede recalcular una cadena
+   entera coherente desde el punto que quiera manipular hasta el final.
+
+Las dos son la misma limitación de fondo: la cadena acredita la **consistencia interna**
+del registro, no su **completitud**. Contra eso solo sirve un punto de referencia externo.
+
+**Mitigación adoptada.** `audit:verify-chain` imprime el hash de la punta y acepta
+`--expect-tip`: se guarda ese hash **fuera de esta base de datos** —en el sistema de
+integración continua, en un vault o en el acta de una revisión— y se le pasa al comando.
+Si la bitácora se truncó o se reescribió, la punta no coincide y el comando termina en 2.
+Es una mitigación real y barata, y es lo que se ha implementado.
+
+**Por qué se acepta el riesgo residual en lugar de cerrarlo.** Las tres formas de cerrarlo
+del todo se descartaron, cada una por su motivo:
+
+- **Firmar la cadena con HMAC y llave en el vault** eliminaría la reescritura completa,
+  pero **rompe que un auditor externo pueda recalcular la cadena**, que es una propiedad
+  que sí queremos conservar: hoy `AuditLogController` publica `previous_hash` y
+  `current_hash` justamente para eso. Un control de integridad que solo el propio sistema
+  puede verificar vale menos como evidencia frente a un tercero.
+- **Almacenamiento WORM** y **publicación periódica de la punta en un tercero** resuelven
+  el problema, pero se apartan de la arquitectura de la Fase 2 y meten infraestructura
+  nueva (sección 8: no se introducen componentes fuera del diseño).
+
+**Aprobado por el usuario el 2026-08-22, tras T8.** Queda registrado también en
+`SECURITY_CHECKLIST.md` como riesgo residual aceptado con su justificación: es la clase de
+decisión que una auditoría quiere ver documentada, no silenciada.
+
+**Qué reabriría la decisión.** Que la bitácora pase a tener valor probatorio frente a un
+tercero —una autoridad, un litigio— o que el modelo de amenazas incorpore al administrador
+de la base de datos como atacante. En ese momento el ancla externa deja de bastar, porque
+depende de que alguien la haya guardado y la compare.
+
 ## 7. Regla operativa de continuidad
 
 **Al iniciar sesión, lee `PROGRESS.md`, `BUGS.md` y `SECURITY_CHECKLIST.md` completos y

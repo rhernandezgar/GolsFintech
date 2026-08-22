@@ -60,6 +60,20 @@ Fases 1 y 2, no uno inventado para este archivo.
 | RNF-07.a | Endpoints autenticados por defecto; las excepciones se declaran de forma explícita. | CLAUDE.md §6 regla 9; Fase 3 §1.4 | T5 | Implementado — cuatro excepciones, todas por necesidad: quien todavía no tiene token no puede presentarlo | CWE-306 · A01:2021 | **El script no cubre hoy esta regla.** Acreditado por `ApiAccessControlTest::the_endpoints_are_authenticated_by_default`, que recorre la tabla de rutas y compara contra una **lista cerrada**: una ruta nueva sin autenticar rompe la prueba. |
 
 
+## Riesgos residuales aceptados
+
+Un control implementado puede dejar un hueco conocido. Registrarlo aquí no lo convierte en
+un hallazgo —no lo es: es una consecuencia del diseño, no un defecto reproducible, y por
+eso no va en `BUGS.md`— pero **callarlo sí sería un defecto del expediente**. Una auditoría
+quiere ver que el hueco se identificó, se midió y se decidió sobre él.
+
+No reciben identificador propio: se nombran por el control del que son residuo.
+
+| Control | Riesgo residual | Mitigación adoptada | Alternativas descartadas y por qué | Aceptado por / fecha | Qué reabriría la decisión |
+|---|---|---|---|---|---|
+| RS-06.b (encadenamiento de la bitácora) | La cadena acredita la **consistencia interna** de la bitácora, no su **completitud**. Dos manipulaciones quedan fuera de su alcance: **(a)** borrar los últimos registros, porque lo que queda sigue siendo una cadena coherente y nada dentro de la tabla dice cuántos registros debería haber; **(b)** reescribir por completo el tramo final, porque el hash **no lleva llave** y el material es público, así que quien tenga escritura sobre la tabla puede recalcular una cadena entera desde el punto que quiera manipular. Lo que sí detecta es toda **manipulación parcial**: alteración, borrado intermedio e inserción, esta última incluso cuando el atacante calcula bien los hashes del registro que inserta | **Ancla externa**: `audit:verify-chain` imprime el hash de la punta y acepta `--expect-tip`. Ese hash se guarda **fuera de esta base de datos** (integración continua, vault o acta de revisión) y se le pasa al comando; si la bitácora se truncó o se reescribió, la punta no coincide y el comando termina en código 2. Acreditado por `VerifyAuditChainCommandTest::deleting_the_last_record_needs_the_external_anchor_to_be_detected` | **HMAC con llave en vault**: cerraría la reescritura completa, pero **rompe que un auditor externo pueda recalcular la cadena**, que es una propiedad que sí se quiere conservar —hoy `AuditLogController` publica `previous_hash` y `current_hash` justamente para eso—. Un control de integridad que solo el propio sistema puede verificar vale menos como evidencia frente a un tercero. **Almacenamiento WORM** y **publicación periódica de la punta en un tercero**: resuelven el problema pero se apartan de la arquitectura de la Fase 2 e introducen infraestructura fuera del diseño (CLAUDE.md §8) | Usuario, 2026-08-22, tras T8. Documentado en CLAUDE.md §6.5 | Que la bitácora pase a tener valor probatorio frente a un tercero (autoridad, litigio) o que el modelo de amenazas incorpore al administrador de la base de datos como atacante. Ahí el ancla externa deja de bastar, porque depende de que alguien la haya guardado y la compare |
+
+
 ## Numeración
 
 La serie `VUL-xx` es **continua entre este archivo y `BUGS.md`** y ningún número se

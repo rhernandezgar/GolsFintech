@@ -867,8 +867,36 @@ BEGIN {
   n = split(WORDS, w, /[ \n\t]+/); for (i=1; i<=n; i++) if (w[i] != "") SP[w[i]] = 1
   n = split(EXC,   e, /[ \n\t]+/); for (i=1; i<=n; i++) if (e[i] != "") EX[e[i]] = 1
 }
+# Deja en la linea solo lo que es codigo: el contenido de cadenas y comentarios se
+# descarta. Recorre caracter a caracter y MANTIENE EL ESTADO ENTRE LINEAS en SST,
+# de modo que una cadena abierta en una linea y cerrada tres mas abajo no deja a
+# las de en medio pareciendo codigo. Es el mismo tratamiento que ya tenian los
+# comentarios de bloque, ahora tambien para las cadenas.
+#   SST = ""  codigo    SST = ' " o `  dentro de cadena    SST = *  comentario de bloque
+function strip(line, isphp,   i, n, c, c2, out) {
+  out = ""; n = length(line)
+  for (i = 1; i <= n; i++) {
+    c  = substr(line, i, 1)
+    c2 = substr(line, i, 2)
+    if (SST == "'" || SST == "\"" || SST == "`") {
+      if (c == "\\") { i++; continue }
+      if (c == SST) SST = ""
+      continue
+    }
+    if (SST == "*") {
+      if (c2 == "*/") { SST = ""; i++ }
+      continue
+    }
+    if (c2 == "/*")  { SST = "*"; i++; continue }
+    if (c2 == "//")  break
+    if (isphp && c == "#") break
+    if (c == "'" || c == "\"" || c == "`") { SST = c; continue }
+    out = out c
+  }
+  return out
+}
 FNR == 1 {
-  inblock=0; here=""; inscript=0
+  SST=""; here=""; inscript=0
   isvue = (FILENAME ~ /\.vue$/)
   isphp = (FILENAME ~ /\.php$/)
   base = FILENAME; sub(/.*\//,"",base); sub(/\.[A-Za-z]+$/,"",base)
@@ -878,32 +906,17 @@ FNR == 1 {
   line = $0
   # .vue: solo el bloque <script>; el <template> es texto para el usuario.
   if (isvue) {
-    if (line ~ /<script/)    { inscript=1; next }
-    if (line ~ /<\/script>/) { inscript=0; next }
+    if (line ~ /<script/)    { inscript=1; SST=""; next }
+    if (line ~ /<\/script>/) { inscript=0; SST=""; next }
     if (!inscript) next
   }
   # heredoc / nowdoc de PHP: es texto, no codigo.
   if (here != "") { if (line ~ ("^[ \t]*" here "[ \t]*;?[ \t]*$")) here=""; next }
-  if (isphp && match(line, /<<<[ \t]*['"]?[A-Za-z_][A-Za-z0-9_]*/)) {
+  if (isphp && SST == "" && match(line, /<<<[ \t]*['"]?[A-Za-z_][A-Za-z0-9_]*/)) {
     h = substr(line, RSTART, RLENGTH); gsub(/[<>'"\t ]/,"",h); here = h
     sub(/<<<.*$/, "", line)
   }
-  # comentarios de bloque
-  if (inblock) {
-    if (line ~ /\*\//) { sub(/^.*\*\//, "", line); inblock=0 } else next
-  }
-  while (match(line, /\/\*/)) {
-    if (line ~ /\/\*.*\*\//) sub(/\/\*.*\*\//, " ", line)
-    else { sub(/\/\*.*$/, "", line); inblock=1; break }
-  }
-  # cadenas de texto (mensajes al usuario incluidos)
-  gsub(/"[^"]*"/, " ", line)
-  gsub(/'[^']*'/, " ", line)
-  gsub(/`[^`]*`/, " ", line)
-  # comentarios de linea
-  sub(/\/\/.*$/, "", line)
-  if (isphp) sub(/#.*$/, "", line)
-  check(line, FNR, "identificador")
+  check(strip(line, isphp), FNR, "identificador")
 }
 AWK
 )

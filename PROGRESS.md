@@ -5,6 +5,65 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 16:20] chore — Limite de la cadena documentado y verificacion 8 del script arreglada
+**Estado:** COMPLETADO — dos encargos del usuario, ninguno de ellos una tarea T#.
+**Commit:** ver `git log --oneline` (commit `chore: el limite de la cadena...`)
+
+### 1. El riesgo residual de la bitacora, aceptado y por escrito
+
+El usuario acepta `--expect-tip` como mitigacion y **no cierra el hueco**: HMAC con llave
+romperia que un auditor externo pueda recalcular la cadena —propiedad que si se quiere
+conservar, y que hoy sostiene `AuditLogController` publicando `previous_hash` y
+`current_hash`—, y WORM o publicacion en un tercero se apartan de la Fase 2.
+
+- **CLAUDE.md §6.5** (nueva): que detecta la cadena, que no, y por que se acepta el
+  riesgo. La distincion de fondo es que la cadena acredita la **consistencia interna** de
+  la bitacora, no su **completitud**.
+- **SECURITY_CHECKLIST.md**, seccion nueva «Riesgos residuales aceptados». No recibe
+  identificador propio: se nombra por el control del que es residuo (RS-06.b). No va en
+  `BUGS.md` porque no es un defecto reproducible, sino una consecuencia del diseno
+  (CLAUDE.md §6.2), pero callarlo si seria un defecto del expediente.
+
+### 2. Verificacion 8 del script: cadenas de varias lineas (autorizado por el usuario)
+
+**Que estaba mal.** El limpiador AWK descartaba cadenas y comentarios **linea a linea**
+(`gsub(/'[^']*'/, " ", line)`). Una cadena abierta en una linea y cerrada tres mas abajo
+—la firma multilinea habitual de un comando de Laravel— dejaba a las lineas de en medio
+pareciendo codigo, y sus palabras en espanol salian como identificadores.
+
+**Que se cambio, y solo esto.** El bloque de limpieza pasa de cuatro `gsub` por linea a
+una funcion `strip()` que recorre caracter a caracter y **mantiene el estado entre lineas**
+en `SST` (`""` codigo, `'` `"` o `` ` `` dentro de cadena, `*` comentario de bloque). Es el
+mismo tratamiento que los comentarios de bloque ya tenian. **No se toco `LANG_WORDS`, ni
+las excepciones (RFC, CURP, INE, RENAPO), ni los directorios revisados, ni ningun otro
+criterio.**
+
+De regalo queda mas correcto en un punto que antes fallaba al reves: el orden anterior
+descartaba cadenas **antes** que comentarios, asi que un apostrofe dentro de un `//`
+abria una cadena falsa. Ahora el comentario corta primero.
+
+**Como se comprobo:**
+1. Salida completa del script antes y despues sobre este repositorio: **identica** salvo
+   marcas de tiempo y duraciones.
+2. Bateria de ficheros de prueba con identificadores en espanol reales en `.php`, `.js` y
+   `.vue` (`prospecto`, `usuario`, `monto`, `tarjeta`): **los cuatro se siguen detectando**.
+3. Los mismos ficheros con espanol dentro de cadenas multilinea (comilla simple, comilla
+   doble, plantilla de JS) y en comentarios: el limpiador antiguo daba **5 falsos
+   positivos**, el nuevo da **0**.
+4. Caso de estado pegado: un apostrofe suelto en un comentario seguido de un identificador
+   en espanol mas abajo. El identificador se sigue detectando: el estado no se queda
+   abierto tragandose el resto del fichero.
+
+**Consecuencia en el codigo de T8.** Se revierte el apano de
+`VerifyAuditChainCommand::$signature`, que estaba escrito como cadena concatenada solo
+para esquivar el falso positivo. Vuelve a ser la firma multilinea idiomatica de Laravel y
+el script ya no la marca.
+
+**Siguiente paso pendiente:** T9 — las 7 vistas de Vue y el router. Sin cambios respecto a
+la entrada de T8.
+
+---
+
 ## [2026-08-22 15:40] T8 — Bitacora verificable: `audit:verify-chain` y las tres formas de manipulacion
 **Estado:** COMPLETADO
 **Commit:** ver `git log --oneline` (commit `T8: ...`)
