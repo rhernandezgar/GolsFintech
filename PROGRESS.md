@@ -5,6 +5,161 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 15:40] T8 — Bitacora verificable: `audit:verify-chain` y las tres formas de manipulacion
+**Estado:** COMPLETADO
+**Commit:** ver `git log --oneline` (commit `T8: ...`)
+**Evidencia:** `php artisan test` -> 292 pruebas / 735 aserciones en verde (24 nuevas);
+`npm test` en `worker/` -> 10 en verde; `bash scripts/verificar_avance.sh` -> **T8: OK
+(8 ok / 0 falta / 0 revisar)**, higiene transversal 9/9, totales 85 OK / 6 FALTA /
+2 REVISAR; `./vendor/bin/pint --test` limpio.
+
+**Que habia y que faltaba.** El encadenamiento existia desde T2/T3: `AuditChain`,
+`AuditEvent`, `SensitiveDataMasker`, `EloquentAuditLogger` con `lockForUpdate` y
+`AuditLogRecord` bloqueando UPDATE y DELETE. Lo que no habia era **como comprobarlo**: sin
+verificador, una cadena rota se descubre leyendo hashes a mano.
+
+**Lo nuevo:**
+- `Domain/Audit/AuditChainVerifier` + `AuditChainLink`, `ChainBreak`, `ChainBreakKind`,
+  `ChainVerificationResult` — recorrido puro, sin Laravel.
+- `Infrastructure/Persistence/Eloquent/AuditChainInspector` — lectura perezosa por
+  paginas (`lazyById`), porque la bitacora crece sin limite por definicion.
+- `Console/Commands/VerifyAuditChainCommand` — `php artisan audit:verify-chain`.
+- `AuditChain::hashOfFields()` — una sola canonicalizacion para escribir y para verificar.
+- 24 pruebas: `Tests\Unit\Domain\AuditChainVerifierTest` (11) y
+  `Tests\Feature\Audit\VerifyAuditChainCommandTest` (13).
+
+### Los cinco puntos que fijo el usuario
+
+**1. Codigo de salida distinto de cero, para integracion continua.** `0` cadena integra,
+`1` cadena rota, `2` la punta no coincide con `--expect-tip`. La tuberia se detiene sola
+sin que nadie lea la salida.
+
+**2. Las tres formas de manipulacion, y por que hacen falta dos comprobaciones.** Por cada
+registro se comprueba (a) que su `previous_hash` sea el `current_hash` del que lo precede
+y (b) que su hash recalculado coincida con el almacenado. **Solo (b) detectaria la
+alteracion y se le escaparian el borrado y la insercion**, porque en esos dos casos cada
+fila superviviente sigue siendo coherente consigo misma; lo que cambia es la costura entre
+registros. Comprobado en vivo sobre MySQL:
+
+| Manipulacion | Resultado |
+|---|---|
+| Alterar `ip_address` del #2 | `contenido alterado` en #2, salida 1 |
+| Borrar el #4 (intermedio) | `eslabon roto` en #5, «no enlaza con el #3 que lo precede», salida 1 |
+| Insertar un #15 entre #10 y #20 **con sus hashes bien calculados** | `eslabon roto` en #20, «no enlaza con el #15 que lo precede», salida 1 |
+
+La insercion se prueba en su version dificil: el atacante enlaza bien con el #10 y calcula
+bien el hash del registro que mete, asi que **ese registro pasa las dos comprobaciones**.
+Lo que no puede es arreglar al #20 sin rehacer todo el tramo final.
+
+El contenido se recalcula con el `previous_hash` **almacenado** del propio registro y no
+con el esperado. Si se usara el esperado, un borrado intermedio saldria ademas como
+contenido alterado que no lo esta, y el diagnostico dejaria de servir en un incidente.
+
+**3. Que campos entran en el hash — documentado en `Domain/Audit/AuditChain`.** El
+material es la concatenacion con `|` de nueve elementos en orden fijo: `previous_hash`,
+`prospect_id`, `affected_entity`, `affected_entity_id`, `event_type`, `actor`,
+`ip_address`, `event_at` (UTC, ATOM, precision de segundo) y `metadata` (JSON con claves
+ordenadas recursivamente). Es decir **todas las columnas de `audit_logs` salvo dos**:
+
+- `id`, porque lo asigna el AUTO_INCREMENT durante el INSERT, o sea despues de calcular el
+  hash; incluirlo obligaria a insertar y luego actualizar, y una bitacora append-only no
+  admite ese UPDATE. No hace falta: renumerar o reordenar cambia quien precede a quien y
+  eso rompe la comprobacion de eslabon.
+- `current_hash`, que es el resultado y no puede ser tambien la entrada.
+
+`ip_address` y `metadata` estan **dentro** a proposito: son justo lo que un atacante
+querria retocar. Hay dos pruebas que alteran solo uno de ellos y exigen que se detecte.
+Y `::the_hashed_columns_cover_the_whole_table` compara `HASHED_COLUMNS` +
+`UNHASHED_COLUMNS` contra `Schema::getColumnListing('audit_logs')`: **anadir una columna
+sin decidir si entra en el hash pone la prueba en rojo**, que es la unica forma de que la
+lista documentada no se quede atras del esquema en silencio.
+
+**4. VUL-04: se enmascara ANTES de firmar.** `AuditEvent` pasa los metadatos por
+`SensitiveDataMasker` en su constructor y `AuditChain::hash()` firma `$event->metadata`,
+ya enmascarado: se firma exactamente lo que se almacena. Si el orden fuera el inverso, la
+verificacion fallaria sobre registros legitimos y la bitacora dejaria de ser evidencia.
+Fijado por dos pruebas: una guarda un evento con CURP, comprueba que se almaceno redactado
+y exige que `audit:verify-chain` salga en 0; la otra recalcula el hash sobre el metadato
+en claro y exige que **no** coincida con el almacenado.
+
+**5. Se reporta el registro, no «cadena invalida».** Cada ruptura sale con id, tipo de
+evento, actor, `event_at`, el valor esperado y el almacenado, y el comando nombra
+explicitamente la primera. `--json` da lo mismo en estructura, para consumo automatico.
+
+### Limitacion documentada: el truncado del final
+
+**Lo que la cadena NO puede detectar por si sola es el borrado de los ULTIMOS registros:**
+lo que queda sigue siendo una cadena perfectamente coherente. Tampoco detecta la
+reescritura completa del tramo final, porque el hash no lleva llave y el material es
+publico: quien tenga escritura sobre la tabla puede recalcular una cadena entera.
+
+Lo que la cadena detecta es la **manipulacion parcial**, que es la realista. Contra el
+truncado hace falta un ancla externa, y por eso el comando imprime el hash de la punta y
+acepta `--expect-tip`: se guarda ese hash fuera de esta base de datos y se le pasa al
+comando. Comprobado en vivo: tras borrar el ultimo registro, sin ancla sale `0`; con el
+ancla del hash anterior sale `2` y dice «LA PUNTA NO COINCIDE».
+
+**Esto queda como decision del usuario, no del asistente.** Cerrar el hueco del todo
+exigiria una de tres cosas —firmar la cadena con HMAC y llave en el vault (rompe que un
+auditor externo pueda recalcularla, que es lo que hoy publica `AuditLogController`),
+almacenamiento WORM, o publicar la punta periodicamente en un tercero— y las tres se
+apartan del diseno de la Fase 2. No se toma esa decision por cuenta propia.
+
+### Dos cosas que hubo que ajustar
+
+**El comando no escribe en la bitacora.** Registrar cada verificacion la haria crecer con
+cada corrida de integracion continua y, peor, anadiria un eslabon en mitad de la
+comprobacion. Auditar la bitacora es una lectura.
+
+**No se declaro un puerto nuevo.** Los siete puertos de `Domain/Port` existen para que el
+dominio llame hacia afuera; aqui no llama a nadie, `AuditChainVerifier` recibe un iterable
+y no sabe de donde sale. El adaptador es `AuditChainInspector` y la regla de dependencia
+se respeta igual. La lista de siete puertos de CLAUDE.md §4 no cambia.
+
+**Se reescribio una prueba que prometia mas de lo que probaba.**
+`EloquentAuditLoggerTest::test_tampering_with_a_record_is_detectable` verificaba el evento
+que quedo **en memoria** contra el hash almacenado: ese objeto no lo toco nadie y seguia
+dando verde con la fila ya manipulada. Ahora recalcula sobre lo almacenado con
+`AuditChainInspector` y exige `ContentAltered` en el id correcto.
+
+### Aviso sobre `scripts/verificar_avance.sh` (seccion 9: no se toco)
+
+La verificacion 8 (convencion de idioma) descarta las cadenas de texto **linea a linea**.
+Una firma multilinea de Laravel —`protected $signature = 'audit:verify-chain` abierta en
+una linea y cerrada tres mas abajo— deja a las lineas de en medio pareciendo codigo, y
+marco «registro» y «registros» de las descripciones de las opciones como identificadores
+en espanol. **No es un fallo del script ni algo que el asistente pueda arreglar por su
+cuenta** (§9 solo permite anadir palabras a `LANG_WORDS`, que aqui empeoraria las cosas).
+Se resolvio en el codigo: la firma es una sola cadena concatenada, con cada trozo abierto
+y cerrado en su propia linea. Queda anotado por si el usuario prefiere ajustar el script.
+
+### Anotado para T10 (instruccion del usuario, 2026-08-22)
+
+1. **Sustituir `getMessage()` por `userMessage()`** en el `catch (DocumentUploadRejected)`
+   de `Http/Controllers/Api/IdentityDocumentController::store()`. Hoy el mensaje que llega
+   al cliente es seguro por convencion —`DocumentUploadRejected` se lanza solo en
+   `UploadedDocumentStore` con textos ya redactados—; con `userMessage()` pasa a ser una
+   decision explicita de cada excepcion. **Requiere ademas** mover
+   `Infrastructure/Storage/DocumentUploadRejected` a la jerarquia de
+   `Domain/Exception/DomainException`, que es quien declara `userMessage()` y
+   `errorCode()`; hoy extiende `RuntimeException` a secas.
+2. **Anadir una prueba de arquitectura** que falle si algun controlador devuelve
+   `getMessage()` al cliente: recorrer `app/Http/Controllers`, y marcar todo
+   `getMessage()` que no vaya a `Log::`. Es la version automatica del `[REVISAR]` de T10
+   «3 uso(s) de getMessage()/getTraceAsString() en backend/app/Http».
+
+**Siguiente paso pendiente:** T9 — las 7 vistas de Vue navegables de extremo a extremo
+(`WelcomeView`, `ProspectDataFormView`, `DocumentUploadView`, `VerificationResultView`,
+`CreditSimulationView`, `AuthorizationConfirmedView`, `CustomerLookupView`) y el router en
+`frontend/src/router/`. El script las marca en `[FALTA]` dentro de T9. El usuario dijo que
+corre la auditoria antes de T9.
+
+**Nota de entorno:** T1 depende de que el servidor de desarrollo este levantado
+(`php artisan serve --host=127.0.0.1 --port=6060`); parado, esa verificacion sale en
+`[FALTA]` sin que haya regresion.
+
+---
+
 ## [2026-08-22 12:05] T7 — Worker Node 24 + BullMQ, endpoint 202 y ciclo asincrono completo
 **Estado:** COMPLETADO — tercer y ultimo bloque de T7.
 **Commit:** ver `git log --oneline` (commit `T7: endpoint 202...`)

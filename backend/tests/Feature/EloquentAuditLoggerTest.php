@@ -8,7 +8,9 @@ use App\Domain\Audit\AuditChain;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
+use App\Domain\Audit\ChainBreakKind;
 use App\Domain\Port\AuditLogger;
+use App\Infrastructure\Persistence\Eloquent\AuditChainInspector;
 use App\Infrastructure\Persistence\Eloquent\AuditLogRecord;
 use DateTimeImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -83,16 +85,16 @@ final class EloquentAuditLoggerTest extends TestCase
         DB::table('audit_logs')->update(['actor' => 'intruder']);
 
         $record = AuditLogRecord::query()->firstOrFail();
-
         $this->assertSame('intruder', $record->actor);
-        $this->assertTrue($this->app->make(AuditChain::class)->verify($event, null, (string) $record->current_hash));
-        $this->assertFalse(
-            $this->app->make(AuditChain::class)->verify(
-                $this->event(AuditEventType::ProspectStarted, 'Prospect', 5, ['step' => 'p1']),
-                null,
-                'no-es-el-hash'
-            )
-        );
+
+        // La deteccion se comprueba recalculando sobre lo ALMACENADO. Verificar el
+        // evento que quedo en memoria no acredita nada: ese objeto no lo toco nadie
+        // y seguiria dando verde con la fila ya manipulada.
+        $result = $this->app->make(AuditChainInspector::class)->verifyStoredChain();
+
+        $this->assertFalse($result->isIntact());
+        $this->assertSame(ChainBreakKind::ContentAltered, $result->firstBreak()->kind);
+        $this->assertSame((int) $record->id, $result->firstBreak()->recordId);
     }
 
     public function test_the_log_rejects_updates(): void
