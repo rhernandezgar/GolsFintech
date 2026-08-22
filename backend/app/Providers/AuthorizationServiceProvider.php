@@ -6,14 +6,19 @@ namespace App\Providers;
 
 use App\Domain\Access\Permission;
 use App\Infrastructure\Persistence\Eloquent\CreditApplicationRecord;
+use App\Infrastructure\Security\CaptchaVerifier;
 use App\Infrastructure\Security\FirstPartyClient;
+use App\Infrastructure\Security\ProspectSessionIssuer;
+use App\Infrastructure\Security\SimulatedCaptchaVerifier;
 use App\Infrastructure\Security\TotpAuthenticator;
+use App\Infrastructure\Security\TurnstileCaptchaVerifier;
 use App\Models\User;
 use App\Policies\CreditApplicationPolicy;
 use DateInterval;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Laravel\Passport\Passport;
 
 /**
@@ -55,6 +60,33 @@ final class AuthorizationServiceProvider extends ServiceProvider
                 'auth_token' => $parameters['authToken'],
             ])
         );
+
+        $this->app->singleton(ProspectSessionIssuer::class, static function ($app): ProspectSessionIssuer {
+            $session = $app['config']->get('security.prospect_session');
+
+            return new ProspectSessionIssuer(
+                ttlMinutes: $session['ttl_minutes'],
+                renewBeforeSeconds: $session['renew_before_seconds'],
+            );
+        });
+
+        // Mismo patron de tabla de drivers que los siete puertos: cambiar de
+        // proveedor de CAPTCHA es configuracion, no codigo.
+        $this->app->singleton(CaptchaVerifier::class, static function ($app): CaptchaVerifier {
+            $captcha = $app['config']->get('security.captcha');
+
+            return match ($captcha['driver']) {
+                'simulated' => new SimulatedCaptchaVerifier($captcha['simulated_token']),
+                'turnstile' => new TurnstileCaptchaVerifier(
+                    secret: (string) $captcha['turnstile']['secret'],
+                    verifyUrl: $captcha['turnstile']['verify_url'],
+                    timeoutSeconds: $captcha['turnstile']['timeout_seconds'],
+                ),
+                default => throw new InvalidArgumentException(
+                    'Driver de CAPTCHA desconocido: '.$captcha['driver'].'. Opciones: simulated, turnstile.'
+                ),
+            };
+        });
 
         $this->app->singleton(TotpAuthenticator::class, function ($app): TotpAuthenticator {
             $totp = $app['config']->get('security.totp');
@@ -118,7 +150,18 @@ final class AuthorizationServiceProvider extends ServiceProvider
         // permisos del usuario, que es otra capa distinta.
         Passport::tokensCan([
             'ocr-result' => 'Devolver al backend el resultado de una extraccion OCR',
+            ProspectSessionIssuer::PROSPECT_SCOPE => 'Operar sobre la propia solicitud en tramite',
+            ProspectSessionIssuer::CUSTOMER_SCOPE => 'Consultar la propia linea de credito y tarjeta',
         ]);
+
+        // Vigencia de la sesion del prospecto y del cliente. Es la vigencia de
+        // los tokens personales, que son los unicos que emite este servidor sin
+        // pasar por el flujo de codigo de autorizacion: los de P1. Corta a
+        // proposito —el tramite completo se estima en menos de 5 minutos
+        // (RNF-02)— y con renovacion silenciosa mientras haya actividad.
+        Passport::personalAccessTokensExpireIn(
+            new DateInterval('PT'.$this->app['config']->get('security.prospect_session.ttl_minutes').'M')
+        );
 
         // El secreto de los clientes lo hashea Passport 13 siempre, sin
         // opcion de guardarlo en claro: una copia de oauth_clients no basta

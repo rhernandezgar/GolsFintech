@@ -64,6 +64,76 @@ return [
     |
     */
 
+    /*
+    |---------------------------------------------------------------------------
+    | Sesion del prospecto (P1)
+    |---------------------------------------------------------------------------
+    |
+    | El visitante que empieza una solicitud no tiene cuenta: el token se emite
+    | en P1, al crear el expediente. Vigencia corta y renovacion silenciosa
+    | mientras haya actividad, no vigencia larga: la Fase 1 estima el tramite
+    | completo en menos de 5 minutos (RNF-02), asi que 30 minutos sobran para
+    | terminarlo y acotan la ventana si el token se filtra.
+    |
+    | La renovacion emite un token nuevo y NO revoca el anterior: revocarlo
+    | dejaria sin credencial a las peticiones ya en vuelo —la consulta de
+    | estado del OCR de P3 va en bucle— y el anterior caduca solo dentro de su
+    | propia ventana. El limite de 30 minutos se mantiene para cada token.
+    |
+    */
+
+    'prospect_session' => [
+        'ttl_minutes' => (int) env('PROSPECT_SESSION_TTL', 30),
+
+        // Margen con el que la SPA pide un token nuevo antes de que caduque el
+        // suyo. Cinco minutos dan de sobra para reintentar si la red falla.
+        'renew_before_seconds' => (int) env('PROSPECT_SESSION_RENEW_BEFORE', 300),
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Aviso de privacidad
+    |---------------------------------------------------------------------------
+    |
+    | La version del aviso viaja a la bitacora junto con el sello de tiempo y la
+    | direccion IP: el consentimiento que exige la LFPDPPP no es un booleano,
+    | es la prueba de QUE texto acepto una persona concreta y CUANDO. Si el
+    | aviso cambia, esta version cambia con el y los consentimientos anteriores
+    | siguen diciendo a que texto se referian.
+    |
+    */
+
+    'privacy_notice' => [
+        'version' => env('PRIVACY_NOTICE_VERSION', '2026-08-01'),
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Control anti-automatizacion (CAPTCHA)
+    |---------------------------------------------------------------------------
+    |
+    | RS-10 y el riesgo R-05 piden control anti-automatizacion, no solo
+    | limitacion de peticiones: throttle limita por direccion IP, y crear
+    | expedientes en masa desde direcciones distintas pasa por debajo de ese
+    | umbral sin despeinarse.
+    |
+    | El driver `simulated` NO es "aceptar todo": acepta unicamente el token de
+    | prueba configurado y rechaza cualquier otro, de modo que la comprobacion
+    | se puede probar sin depender de un tercero. En produccion se define
+    | CAPTCHA_DRIVER=turnstile con su secreto.
+    |
+    */
+
+    'captcha' => [
+        'driver' => env('CAPTCHA_DRIVER', 'simulated'),
+        'simulated_token' => env('CAPTCHA_SIMULATED_TOKEN', 'captcha-ok'),
+        'turnstile' => [
+            'secret' => env('TURNSTILE_SECRET'),
+            'verify_url' => env('TURNSTILE_VERIFY_URL', 'https://challenges.cloudflare.com/turnstile/v0/siteverify'),
+            'timeout_seconds' => (int) env('TURNSTILE_TIMEOUT', 5),
+        ],
+    ],
+
     'oauth' => [
         'code_challenge_methods' => ['S256'],
         'access_token_ttl_minutes' => (int) env('OAUTH_ACCESS_TOKEN_TTL', 15),

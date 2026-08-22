@@ -120,6 +120,12 @@ final class ApiAccessControlTest extends TestCase
             // Canje del codigo de autorizacion por el token; la credencial es
             // el code_verifier de PKCE.
             'POST api/v1/auth/token',
+            // P1: es el endpoint donde nace la credencial del prospecto, que
+            // llega sin cuenta y sin pantalla de registro. Compensado con
+            // throttle:5,1 y CAPTCHA obligatorio; el token que emite nace
+            // acotado a `prospect-session` y con 30 minutos de vigencia.
+            // Justificacion completa en la cabecera de routes/api.php.
+            'POST api/v1/prospects',
         ], $unauthenticated, 'Hay un endpoint sin autenticar que no esta declarado como excepcion.');
     }
 

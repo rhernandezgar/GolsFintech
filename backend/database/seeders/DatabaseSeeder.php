@@ -21,5 +21,6 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(OAuthSpaClientSeeder::class);
+        $this->call(OAuthPersonalAccessClientSeeder::class);
     }
 }

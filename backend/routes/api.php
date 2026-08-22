@@ -7,10 +7,12 @@ use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\CreditApplicationController;
 use App\Http\Controllers\Api\IdentityDocumentController;
 use App\Http\Controllers\Api\MeController;
+use App\Http\Controllers\Api\ProspectController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RefreshTokenController;
 use App\Http\Controllers\Auth\SessionController;
 use App\Http\Controllers\Internal\OcrResultController;
+use App\Infrastructure\Security\ProspectSessionIssuer;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -23,13 +25,53 @@ use Illuminate\Support\Facades\Route;
 | config('passport.path'), con el middleware EnforcePkceS256 aplicado al grupo.
 |
 | Regla de seguridad no negociable 9: autenticado por defecto. Las excepciones
-| se declaran de forma explicita y son solo dos, ambas por necesidad —quien
-| todavia no tiene token no puede presentarlo—:
+| se declaran de forma explicita y son por necesidad —quien todavia no tiene
+| token no puede presentarlo—:
 |
-|   POST /auth/login    limitado por intentos, mensaje generico
-|   POST /auth/refresh  el refresh_token es la credencial
+|   POST /auth/login     limitado por intentos, mensaje generico
+|   POST /auth/refresh   el refresh_token es la credencial
+|   POST /prospects      QUINTA EXCEPCION, vease abajo
+|
+| ---------------------------------------------------------------------------
+| La quinta excepcion: POST /prospects (P1)
+| ---------------------------------------------------------------------------
+|
+| Es el endpoint donde NACE la credencial del prospecto. Quien llega a P1 no
+| tiene cuenta ni la va a crear: el prototipo de la Fase 2 no contempla ninguna
+| pantalla de registro y la Fase 1 estima el tramite completo en menos de cinco
+| minutos (RNF-02). Exigir token aqui seria pedirle al visitante que presente
+| algo que solo esta peticion puede darle.
+|
+| La alternativa que se descarto era dejar publicas las seis pantallas del
+| portal y pasar el identificador del expediente por la URL. Habria multiplicado
+| las excepciones por seis y, peor, habria convertido ese identificador en una
+| credencial de portador: quien lo adivinara o lo interceptara leeria y
+| modificaria la solicitud ajena (CWE-639). Con una sola excepcion, el prospecto
+| sale del token en todos los pasos siguientes y no hay identificador ajeno que
+| nombrar.
+|
+| Lo que compensa la exposicion, porque una excepcion no se declara y ya:
+|
+|   - throttle:5,1        limita la creacion por direccion IP;
+|   - CAPTCHA obligatorio  encarece repartir el trabajo entre muchas
+|                          direcciones, que es justo lo que el throttle no ve
+|                          (RS-10, riesgo R-05). El control esta en el
+|                          controlador, no en el FormRequest, para poder
+|                          registrar el rechazo en la bitacora;
+|   - el token que emite  nace acotado al scope `prospect-session` y con 30
+|                          minutos de vigencia;
+|   - no devuelve nada    ni confirma ni niega la existencia de ningun
+|                          expediente anterior: solo crea el suyo.
 |
 */
+
+/*
+| P1. Inicio de la solicitud: crea el expediente y emite la sesion del
+| prospecto. Quinta excepcion a la regla 9, justificada en la cabecera.
+*/
+Route::post('/prospects', [ProspectController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('prospects.store');
 
 Route::middleware('web')->group(function (): void {
     // El acceso inicial se apoya en la sesion del guard web, que es la que
@@ -51,6 +93,27 @@ Route::middleware('auth:api')->group(function (): void {
         ->name('auth.session.destroy');
 
     Route::get('/me', [MeController::class, 'show'])->name('me');
+
+    /*
+    | Recorrido del prospecto (P2 a P6). El expediente sale SIEMPRE del token,
+    | nunca de la URL: no hay ningun identificador de otro prospecto que se
+    | pueda nombrar desde fuera.
+    |
+    | El scope acota lo que el token puede hacer con independencia del rol del
+    | usuario. Es defensa en profundidad: si manana un fallo escalara el rol,
+    | el token seguiria sin abrir nada que no estuviera en su alcance el dia que
+    | se emitio.
+    */
+    Route::middleware('scopes:'.ProspectSessionIssuer::PROSPECT_SCOPE)
+        ->prefix('prospects/me')
+        ->group(function (): void {
+            Route::get('/', [ProspectController::class, 'show'])->name('prospects.me.show');
+
+            // Renovacion silenciosa mientras haya actividad.
+            Route::post('/session', [ProspectController::class, 'renewSession'])
+                ->middleware('throttle:20,1')
+                ->name('prospects.me.session.renew');
+        });
 
     // Recursos de negocio. read-only se aplica al grupo entero y no ruta por
     // ruta: que un rol de solo lectura no escriba es una propiedad del rol, y

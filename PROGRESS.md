@@ -5,6 +5,99 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 16:45] T9 (parcial 1/3) — Sesion del prospecto: la quinta excepcion a la regla 9
+**Estado:** EN PROGRESO — primer bloque de T9. **T9 no esta terminada:** faltan el resto de
+endpoints del recorrido (P2, P4, P5, P6, P7) y las siete vistas de Vue.
+**Commit:** ver `git log --oneline` (commit `T9 (parcial): sesion del prospecto...`)
+**Evidencia:** `php artisan test` -> 307 pruebas / 791 aserciones en verde (15 nuevas);
+`pint` limpio.
+
+### Por que este bloque existe
+
+Al contrastar las siete vistas contra la API aparecieron **dos huecos que el plan T1-T12
+nunca asigno a ninguna tarea**:
+
+1. De los siete pasos, **solo P3 tiene endpoints**. No existen los de iniciar solicitud,
+   capturar datos, validar identidad, simular, aceptar la oferta ni consultar clientes.
+2. `IdentityDocumentController` ya deriva el prospecto de `$request->user()->prospect_id`,
+   o sea que la API **asume un prospecto autenticado**, pero no habia forma de que un
+   visitante nuevo obtuviera esa sesion, y la P1 del prototipo no tiene pantalla de acceso.
+
+El usuario eligio la opcion 1 de las tres planteadas: **token de prospecto emitido en P1**.
+
+### Lo que se hizo
+
+- `Infrastructure/Security/ProspectSessionIssuer` + `IssuedSession`.
+- `Infrastructure/Security/CaptchaVerifier` con `SimulatedCaptchaVerifier` y
+  `TurnstileCaptchaVerifier`, tabla de drivers en `AuthorizationServiceProvider`.
+- `Api/ProspectController` (`store`, `show`, `renewSession`) y
+  `Http/Requests/Prospect/StartProspectCaptureRequest`.
+- Scopes `prospect-session` y `customer-session` en el catalogo de Passport; alias de
+  middleware `scopes` en `bootstrap/app.php`.
+- `OAuthPersonalAccessClientSeeder`: Passport necesita cliente de tokens personales para
+  emitir en P1, que no pasa por el flujo de codigo de autorizacion.
+- `config/security.php`: secciones `prospect_session`, `privacy_notice` y `captcha`.
+
+### Las seis precisiones del usuario
+
+**1. Vigencia corta.** 30 minutos por token (`PROSPECT_SESSION_TTL`), no sesion larga: la
+Fase 1 estima el tramite en menos de 5 minutos (RNF-02). La renovacion emite uno nuevo y
+**no revoca el anterior** a proposito: P3 consulta el estado del OCR en bucle y revocar en
+caliente dejaria sin credencial a la peticion que ya iba por el cable. Cada token caduca
+por su cuenta, asi que el limite de 30 minutos se cumple igual.
+
+**2. Alcance acotado.** El token nace con scope `prospect-session` y el rol es `prospect`.
+Son dos barreras independientes: la prueba
+`a_token_without_the_scope_is_refused_even_with_the_right_role` usa el mismo usuario con
+el mismo rol y un token sin alcance, y recibe 403. El expediente sale **siempre** del
+token y no de la URL, asi que no hay identificador ajeno que nombrar (CWE-639), y
+`CreditApplicationPolicy` sigue decidiendo sobre el registro.
+
+**3. CAPTCHA ademas del throttle.** No son redundantes y por eso van los dos: `throttle:5,1`
+cuenta por direccion IP, y repartir el trabajo entre muchas direcciones pasa por debajo del
+umbral sin esfuerzo. El driver `simulated` **no acepta cualquier cosa** —solo el token de
+prueba configurado—, para que el control sea comprobable sin depender de un tercero. La
+verificacion esta en el controlador y no en el FormRequest **para poder registrar el
+rechazo en la bitacora**: un pico de rechazos es justo la senal del riesgo R-05.
+
+**4. Consentimiento con evidencia.** `privacy_notice_accepted` deja de ser un `true` sin
+rastro: `StartProspectCapture` recibe ahora la version del aviso y la bitacora guarda
+`privacy_notice_accepted_at`, `privacy_notice_version` e `ip_address` —esta ultima en
+columna propia y **dentro del material del hash**, de modo que no se puede retocar sin
+romper la cadena—. La version vive en `config('security.privacy_notice.version')`: si el
+aviso cambia, los consentimientos anteriores siguen diciendo a que texto se referian.
+
+**5. Reemision al convertirse en cliente.** `promoteToCustomer()` revoca **todos** los
+tokens de prospecto antes de emitir el de `customer-session`. Dejar vivo el anterior seria
+una escalada silenciosa: el mismo token pasaria a valer para endpoints que no existian
+cuando se emitio.
+
+**6. Quinta excepcion declarada.** En la cabecera de `routes/api.php` con su justificacion
+completa, en la lista cerrada de `ApiAccessControlTest` y en la fila RNF-07.a de
+`SECURITY_CHECKLIST.md`. Se anadio ademas la fila **RS-10.a** para el control
+anti-automatizacion, que no tenia entrada.
+
+### Una decision que conviene tener a la vista
+
+**El usuario del prospecto no es una cuenta.** Toda la API se apoya en `users.prospect_id`,
+asi que hace falta un usuario; pero ese usuario **no puede iniciar sesion con contrasena**:
+su correo esta en el dominio reservado `.invalid` (RFC 2606), que no existe ni puede
+recibir correo, y su contrasena es una cadena aleatoria de 64 caracteres que no conoce
+nadie y que no se devuelve en ninguna respuesta. La unica credencial es el token, y el
+token caduca. Lo fija `the_generated_user_cannot_log_in_with_a_password`.
+
+**Nota sobre la prueba de caducidad.** No se comprueba viajando en el tiempo: la caducidad
+del JWT la valida league/oauth2-server contra el reloj real del sistema, que
+`Carbon::setTestNow` no toca. Se comprueba sobre `expires_at` del token emitido.
+
+**Siguiente paso pendiente:** T9 (parcial 2/3) — endpoints de P2 (captura y confirmacion),
+P4 (validacion de identidad), P5 (simulacion), P6 (aceptacion y alta de cliente) y P7
+(consulta). Hacen falta tres casos de uso nuevos: `ValidateIdentity`, `AcceptCreditOffer` y
+`LookupCustomer`. Los de P2 y P5 ya existen (`CaptureProspectData`, `ConfirmProspectData`,
+`SimulateCredit`) y solo necesitan controlador y FormRequest.
+
+---
+
 ## [2026-08-22 16:20] chore — Limite de la cadena documentado y verificacion 8 del script arreglada
 **Estado:** COMPLETADO — dos encargos del usuario, ninguno de ellos una tarea T#.
 **Commit:** ver `git log --oneline` (commit `chore: el limite de la cadena...`)

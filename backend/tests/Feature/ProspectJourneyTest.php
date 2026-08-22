@@ -48,7 +48,7 @@ final class ProspectJourneyTest extends TestCase
     private function startAndCapture(string $monthlyIncome = '20000.00'): Prospect
     {
         $prospect = $this->app->make(StartProspectCapture::class)
-            ->execute(CaptureMethod::Manual, $this->context(), $this->now);
+            ->execute(CaptureMethod::Manual, '2026-08-01', $this->context(), $this->now);
 
         return $this->app->make(CaptureProspectData::class)->execute(
             $prospect->publicId(),

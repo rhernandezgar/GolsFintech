@@ -29,6 +29,7 @@ final readonly class StartProspectCapture
 
     public function execute(
         CaptureMethod $captureMethod,
+        string $privacyNoticeVersion,
         AuditContext $context,
         DateTimeImmutable $now,
     ): Prospect {
@@ -42,9 +43,14 @@ final readonly class StartProspectCapture
             prospectId: $prospect->id(),
             context: $context,
             eventAt: $now,
+            // Evidencia del consentimiento que exige la LFPDPPP: no basta con
+            // un booleano. Hay que poder decir QUE texto se acepto y CUANDO, y
+            // desde donde: la direccion IP viaja en el AuditContext y es una
+            // columna propia de la bitacora, dentro del material del hash.
             metadata: [
                 'capture_method' => $captureMethod->value,
                 'privacy_notice_accepted_at' => $now->format(DateTimeImmutable::ATOM),
+                'privacy_notice_version' => $privacyNoticeVersion,
             ],
         ));
 
