@@ -48,6 +48,24 @@ return [
             // Falla el encolado mismo, no el procesamiento: simula la cola caida.
             'fail_enqueue' => env('OCR_SIMULATED_FAIL_ENQUEUE', false),
         ],
+
+        // Cola real sobre BullMQ que consume el worker de Node (T7). El
+        // escenario simulado sigue viajando en el identificador del trabajo:
+        // 'bullmq' cambia el transporte, no quien hace la extraccion. El
+        // proveedor real de OCR entra como adaptador del worker.
+        'bullmq' => [
+            'queue' => env('OCR_QUEUE_NAME', 'ocr'),
+            'job' => 'ocr.extract',
+
+            // Intentos TOTALES, incluido el primero. Coincide con
+            // IdentityDocument::MAX_OCR_ATTEMPTS: si BullMQ reintentara mas
+            // veces que las que el dominio admite, el documento acabaria en un
+            // estado que la entidad no acepta.
+            'attempts' => (int) env('OCR_QUEUE_ATTEMPTS', 3),
+
+            // Retardo base del backoff exponencial en milisegundos: 1 s, 2 s, 4 s.
+            'backoff_ms' => (int) env('OCR_QUEUE_BACKOFF_MS', 1000),
+        ],
     ],
 
     'identity' => [
@@ -85,6 +103,38 @@ return [
         'simulated' => [
             'fail' => env('NOTIFICATION_SIMULATED_FAIL', false),
         ],
+
+        'bullmq' => [
+            'queue' => env('NOTIFICATION_QUEUE_NAME', 'notifications'),
+            'job' => 'notification.send',
+
+            // Mas intentos y mas separacion que el OCR: una pasarela de correo
+            // o SMS suele restablecerse sola, y reintentar un aviso no cuesta
+            // reprocesar una imagen. 2 s, 4 s, 8 s, 16 s.
+            'attempts' => (int) env('NOTIFICATION_QUEUE_ATTEMPTS', 5),
+            'backoff_ms' => (int) env('NOTIFICATION_QUEUE_BACKOFF_MS', 2000),
+        ],
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Cola BullMQ compartida
+    |---------------------------------------------------------------------------
+    |
+    | Prefijo y conexion que usan todos los adaptadores que encolan. El prefijo
+    | tiene que ser el MISMO que el del worker de Node (worker/.env): si no
+    | coinciden, el backend escribe en un juego de claves que el worker no mira
+    | y los trabajos se pierden sin ruido.
+    |
+    | La conexion 'bullmq' de config/database.php es la unica sin prefijo de
+    | Laravel, precisamente por esto.
+    |
+    */
+
+    'bullmq' => [
+        'connection' => 'bullmq',
+        'prefix' => env('BULLMQ_PREFIX', 'bull'),
+        'max_len_events' => (int) env('BULLMQ_MAX_LEN_EVENTS', 10000),
     ],
 
 ];

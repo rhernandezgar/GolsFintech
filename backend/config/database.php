@@ -179,6 +179,33 @@ return [
             'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
         ],
 
+        /*
+        |-----------------------------------------------------------------------
+        | Conexion de BullMQ — sin prefijo de claves
+        |-----------------------------------------------------------------------
+        |
+        | Las demas conexiones anteponen 'options.prefix' a cada clave. BullMQ
+        | tiene su propio esquema de nombres (bull:<cola>:wait, :id, :marker...)
+        | y el worker de Node lee exactamente esas claves: con el prefijo de
+        | Laravel delante, el backend escribiria en un juego de claves que el
+        | worker no mira nunca y los trabajos se perderian en silencio, que es
+        | la peor forma de fallar.
+        |
+        | Por eso esta conexion fija 'prefix' => '' de forma explicita. El
+        | prefijo propio de BullMQ se configura en config/adapters.php.
+        |
+        */
+
+        'bullmq' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_QUEUE_DB', '0'),
+            'prefix' => '',
+        ],
+
     ],
 
 ];

@@ -5,6 +5,101 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 10:35] T7 (parcial 1/2) — Productor BullMQ desde PHP, verificado contra un Worker real
+**Estado:** EN PROGRESO — avance parcial commiteado tras un corte de conexion a mitad de
+la tarea. **T7 no esta terminada.** Lo commiteado es el lado que encola; falta el worker
+de Node y el endpoint 202.
+**Commit:** ver `git log --oneline` (commit `T7: productor BullMQ...`)
+
+**Que quedo funcionando, comprobado con comandos y no de memoria:**
+- `BullMqQueue::add()` encola desde PHP en el formato nativo de BullMQ, en un unico
+  script Lua (atomico: un trabajo con hash pero sin entrada en `wait` no lo procesa
+  nadie, y uno en `wait` sin hash rompe al worker).
+- `BullMqOcrService` y `BullMqNotificationSender`: adaptadores de los puertos `OcrService`
+  y `NotificationSender` con driver `bullmq`, reintentos y backoff exponencial.
+- `UploadedDocumentStore` + `DocumentUploadRejected`: controles de VUL-01 (tipo real por
+  `finfo`, nombre generado, fuera de la raiz web, limite de 5 MB, hash SHA-256).
+- Los drivers nuevos NO estan activos: `OCR_DRIVER` y `NOTIFICATION_DRIVER` siguen en
+  `simulated`. Cambiar el transporte antes de que exista el worker dejaria trabajos
+  encolados que nadie consume.
+
+**Verificacion de esta entrega (2026-08-22, en este servidor):**
+- `php artisan tinker` -> `BullMqQueue::add('probe-t7', ...)` devuelve `jobId=1` y deja en
+  Redis las seis claves `bull:probe-t7:{id,1,wait,marker,meta,events}`.
+- Un `Worker` de BullMQ 6.1.2 de verdad, ejecutado desde `worker/`, consumio ese trabajo:
+  `CONSUMED id=1 name=probe.job data={"hello":"world"} attempts=3
+  backoff={"type":"exponential","delay":1000}`. La interoperabilidad PHP -> Node esta
+  probada de punta a punta, no supuesta.
+- `PAO_DISABLE=1 php artisan test` -> **246 pruebas aprobadas, 587 aserciones**.
+- `./vendor/bin/pint --dirty` -> limpio.
+
+**Dos detalles no obvios que conviene dejar por escrito:**
+
+1. **El prefijo de Redis de Laravel corrompia las claves de BullMQ.** Las conexiones de
+   `config/database.php` anteponen `options.prefix` —aqui `golsfintech-database-`— a cada
+   clave. Con el, el backend habria escrito en `golsfintech-database-bull:ocr:wait` y el
+   worker de Node habria seguido mirando `bull:ocr:wait`: los trabajos se pierden **en
+   silencio**, sin error en ninguno de los dos lados, que es la peor forma de fallar. Por
+   eso hay una conexion dedicada `bullmq` con `'prefix' => ''` explicito, y el prefijo
+   propio de BullMQ se configura aparte en `config/adapters.php`. Se detecto leyendo
+   `config/database.php` **antes** de escribir el productor, y se comprobo despues
+   volcando las claves reales.
+
+2. **El formato de BullMQ 6.1.2 se observo, no se leyo.** El esquema de claves es interno
+   de la libreria y la documentacion no lo fija como contrato. Se determino haciendo un
+   `Queue.add` desde Node y volcando Redis entero para ver que escribio, y solo despues se
+   replico desde PHP. Es acoplamiento explicito a una version: lo que impide que una
+   actualizacion lo rompa en silencio es `BullMqContractTest`, **que todavia no existe** y
+   es parte del trabajo pendiente.
+
+**Nota metodologica relacionada (del chore de `suite_failed`):** que pao emite
+`"result":"failed"` tampoco se supuso — se comprobo ejecutando la suite en rojo bajo pao y
+mirando el JSON. Resulto ser `"failed"` para phpunit y `"fail"` para pint, que no es lo
+mismo y no se habria acertado de memoria.
+
+**Siguiente paso pendiente (accionable sin contexto):**
+
+*(a) El worker de Node.* `worker/src/` solo tiene el scaffold de T1 (`index.js` que
+imprime la configuracion) y tres `.gitkeep`. Falta escribir:
+  - `worker/src/config.js` — lee `REDIS_URL`, `OCR_QUEUE_NAME`, `NOTIFICATION_QUEUE_NAME`
+    y `BULLMQ_PREFIX` de `worker/.env`. **El prefijo tiene que coincidir con
+    `config('adapters.bullmq.prefix')` del backend** (ver detalle 1).
+  - `worker/src/queues/{ocrQueue,notificationQueue}.js` — conexion ioredis y nombres.
+  - `worker/src/processors/ocrProcessor.js` — debe distinguir error reintentable de
+    definitivo: `timeout` reintenta; `unreadable` lanza `UnrecoverableError` de BullMQ,
+    que corta los reintentos en seco. El escenario viaja en `job_ref` con el formato
+    `ocrsim-<escenario>-<16 hex>` que emite `BullMqOcrService::enqueueExtraction()`.
+  - `worker/src/processors/notificationProcessor.js`.
+  - `worker/src/adapters/` — adaptador falso de OCR y de notificaciones (`OCR_ADAPTER=fake`).
+  - `worker/src/index.js` — registrar los dos `Worker`. **Sin servidor HTTP**: el worker
+    solo consume de la cola, y la verificacion negativa del script lo comprueba
+    (`express|createServer\(|fastify|\.listen\(` debe dar cero archivos).
+
+*(b) El endpoint 202.* El caso de uso ya existe y ya es asincrono
+(`Application/UseCase/Identity/UploadIdentityDocument::execute()`, que llama a
+`enqueueExtraction` y devuelve). Falta la capa HTTP:
+  - `Http/Controllers/Api/IdentityDocumentController@store` — recibe el archivo, lo pasa
+    por `UploadedDocumentStore`, ejecuta el caso de uso y responde **202 Accepted con el
+    identificador de seguimiento**, nunca esperando al OCR (Fase 2, Figura 2a).
+  - `Http/Requests/UploadIdentityDocumentRequest` — validacion de servidor (regla 4).
+  - Endpoint de consulta del estado del seguimiento.
+  - Rutas en `routes/api.php`, dentro del grupo `auth:api`.
+  - Callback de resultado para el worker, protegido con `EnsureClientIsResourceOwner` de
+    Passport (token de client_credentials + scope).
+
+*(c) Pruebas que faltan y que cierran T7:*
+  - `BullMqContractTest` — encola desde PHP y lo consume un `Worker` de BullMQ real. Es lo
+    unico que sostiene el acoplamiento del detalle 2.
+  - Prueba del 202: el script exige `assertStatus(202)|assertAccepted` en `backend/tests`.
+  - Prueba de PT-03: agotados los reintentos, la solicitud **no pierde los datos del
+    prospecto**. Por eso los adaptadores encolan con `removeOnFail: false`.
+
+**Estado de las nueve verificaciones de T7 en `verificar_avance.sh` al cerrar este
+avance parcial:** solo pasa `node -v = v24`. Las otras ocho dependen del worker y del
+endpoint, que es exactamente lo que queda pendiente.
+
+---
+
 ## [2026-08-22 09:40] chore — La regla 6 distingue SHA-1 como hash de HMAC-SHA-1
 **Estado:** completado
 **Commit:** ver `git log --oneline` (commit `chore: la regla 6 distingue...`)

@@ -14,13 +14,17 @@ use App\Domain\Port\ProspectRepository;
 use App\Infrastructure\Card\SimulatedCardIssuer;
 use App\Infrastructure\Identity\IdentityScenario;
 use App\Infrastructure\Identity\SimulatedIdentityValidator;
+use App\Infrastructure\Notification\BullMqNotificationSender;
 use App\Infrastructure\Notification\SimulatedNotificationSender;
+use App\Infrastructure\Ocr\BullMqOcrService;
 use App\Infrastructure\Ocr\OcrScenario;
 use App\Infrastructure\Ocr\SimulatedOcrService;
 use App\Infrastructure\Persistence\Eloquent\EloquentAuditLogger;
 use App\Infrastructure\Persistence\Eloquent\EloquentDocumentRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentProspectRepository;
+use App\Infrastructure\Queue\BullMqQueue;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\Redis\Factory as RedisFactory;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
@@ -43,6 +47,30 @@ final class AdapterServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // --- Transporte de la cola ----------------------------------------------
+        // BullMqQueue no es un puerto: es la pieza compartida por los
+        // adaptadores que encolan, y su configuracion —conexion, prefijo— tiene
+        // que ser una sola para que backend y worker miren las mismas claves.
+
+        $this->app->singleton(BullMqQueue::class, static fn (Application $app): BullMqQueue => new BullMqQueue(
+            redis: $app->make(RedisFactory::class),
+            connection: (string) config('adapters.bullmq.connection', 'bullmq'),
+            prefix: (string) config('adapters.bullmq.prefix', 'bull'),
+            maxLenEvents: (int) config('adapters.bullmq.max_len_events', 10000),
+        ));
+
+        // El simulado se registra aparte porque lo usan dos drivers: como
+        // adaptador completo con driver 'simulated', y como resolutor de
+        // escenarios dentro del driver 'bullmq'. Sin este enlace, un
+        // $app->make() lo construiria por autowiring y perderia su
+        // configuracion, que es justo lo que decide el desenlace simulado.
+        $this->app->singleton(SimulatedOcrService::class, fn (Application $app): SimulatedOcrService => new SimulatedOcrService(
+            logger: $app->make(LoggerInterface::class),
+            forcedScenario: $this->scenario(OcrScenario::class, 'adapters.ocr.simulated.force_scenario'),
+            scenarioMarkers: (array) config('adapters.ocr.simulated.scenario_markers', []),
+            failEnqueue: $this->flag('adapters.ocr.simulated.fail_enqueue'),
+        ));
+
         // --- Persistencia -------------------------------------------------------
         // El adaptador de pruebas no vive aqui: los dobles en memoria estan en
         // tests/Support/Doubles y cada prueba los enchufa por su cuenta. Apuntar la
@@ -60,17 +88,28 @@ final class AdapterServiceProvider extends ServiceProvider
             'eloquent' => static fn (Application $app): AuditLogger => $app->make(EloquentAuditLogger::class),
         ]);
 
-        // --- Servicios externos, todos simulados en T4 --------------------------
-        // Sin credenciales y sin red: no hay convenio con INE ni con RENAPO y el
-        // entorno es de desarrollo. El adaptador real de cada uno entra en su
-        // tarea: OCR en T7, identidad en T7, tarjetas en T9, notificaciones en T8.
+        // --- Servicios externos -------------------------------------------------
+        // Sin credenciales y sin red hacia proveedores: no hay convenio con INE
+        // ni con RENAPO y el entorno es de desarrollo. Identidad y tarjetas
+        // siguen simulados; su adaptador contra proveedor entra en su tarea.
+        //
+        // OCR y notificaciones ganan en T7 el driver 'bullmq', que SI es
+        // transporte real: encola en Redis y lo consume el worker de Node. Lo
+        // que sigue simulado ahi es el proveedor, no la cola.
 
         $this->bindPort(OcrService::class, 'adapters.ocr', [
-            'simulated' => fn (Application $app): OcrService => new SimulatedOcrService(
+            'simulated' => fn (Application $app): OcrService => $app->make(SimulatedOcrService::class),
+
+            'bullmq' => fn (Application $app): OcrService => new BullMqOcrService(
+                queue: $app->make(BullMqQueue::class),
+                // El simulado se reutiliza solo para resolver que escenario
+                // corresponde a cada documento; no encola nada.
+                scenarios: $app->make(SimulatedOcrService::class),
                 logger: $app->make(LoggerInterface::class),
-                forcedScenario: $this->scenario(OcrScenario::class, 'adapters.ocr.simulated.force_scenario'),
-                scenarioMarkers: (array) config('adapters.ocr.simulated.scenario_markers', []),
-                failEnqueue: $this->flag('adapters.ocr.simulated.fail_enqueue'),
+                queueName: (string) config('adapters.ocr.bullmq.queue', 'ocr'),
+                jobName: (string) config('adapters.ocr.bullmq.job', 'ocr.extract'),
+                attempts: (int) config('adapters.ocr.bullmq.attempts', 3),
+                backoffDelayMs: (int) config('adapters.ocr.bullmq.backoff_ms', 1000),
             ),
         ]);
 
@@ -92,6 +131,15 @@ final class AdapterServiceProvider extends ServiceProvider
             'simulated' => fn (Application $app): NotificationSender => new SimulatedNotificationSender(
                 logger: $app->make(LoggerInterface::class),
                 fail: $this->flag('adapters.notification.simulated.fail'),
+            ),
+
+            'bullmq' => fn (Application $app): NotificationSender => new BullMqNotificationSender(
+                queue: $app->make(BullMqQueue::class),
+                logger: $app->make(LoggerInterface::class),
+                queueName: (string) config('adapters.notification.bullmq.queue', 'notifications'),
+                jobName: (string) config('adapters.notification.bullmq.job', 'notification.send'),
+                attempts: (int) config('adapters.notification.bullmq.attempts', 5),
+                backoffDelayMs: (int) config('adapters.notification.bullmq.backoff_ms', 2000),
             ),
         ]);
     }
