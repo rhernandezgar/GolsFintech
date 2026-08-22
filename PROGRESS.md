@@ -5,6 +5,91 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-22 11:20] T7 (parcial 2/3) — Worker de Node: consume, reintenta y distingue el error definitivo
+**Estado:** EN PROGRESO — segundo bloque de T7. **T7 sigue sin terminar:** falta la capa
+HTTP (endpoint 202, consulta de seguimiento y callback del worker) y sus pruebas.
+**Commit:** ver `git log --oneline` (commit `T7 (parcial): worker de Node...`)
+
+**Que se escribio.** `worker/src/` deja de ser el scaffold de T1: 11 modulos con
+`config.js` (valida al arrancar y muere si la configuracion no sirve), `logger.js`,
+`redis.js`, dos colas, dos procesadores, cuatro adaptadores y un `index.js` que registra
+los dos `Worker` y no abre ningun puerto.
+
+**La decision que importa, y donde vive.** `processors/ocrProcessor.js` es el unico
+archivo que decide que se reintenta:
+- `timeout` -> se relanza tal cual; BullMQ aplica el backoff exponencial del trabajo.
+- `unreadable` -> se traduce a `UnrecoverableError`, que corta los reintentos en seco.
+- Carga incompleta -> tambien `UnrecoverableError`: es un defecto de quien encolo, no
+  una indisponibilidad, y no mejora por reintentarse.
+
+El fallo NO se reporta desde el procesador; lo reporta el manejador de `failed` de
+`index.js` y solo cuando es definitivo. Repartirlo asi evita avisar dos veces del mismo
+trabajo.
+
+**Semantica de BullMQ 6.1.2 comprobada, no supuesta** (misma disciplina que con el
+esquema de claves). Se encolo un trabajo que siempre falla y otro que lanza
+`UnrecoverableError`, y se observo:
+- `job.attemptsMade` es **0 en el primer intento** dentro del procesador, y ya viene
+  incrementado en el manejador de `failed`.
+- `UnrecoverableError` deja el trabajo en `failed` tras **un solo intento**, aunque
+  `attempts` sea 3.
+- **`job.finishedOn` queda fijado exactamente en el fallo definitivo** y sin fijar en los
+  intermedios. Es mejor discriminador que contar intentos a mano, y es lo que usa
+  `index.js`. Se habria acertado por casualidad contando intentos; con
+  `UnrecoverableError` de por medio, no.
+
+**Verificacion de punta a punta (2026-08-22, en este servidor).** El backend encolo con
+el adaptador real (`OCR_DRIVER=bullmq`, `BullMqOcrService`) tres documentos, uno por
+escenario, y el worker los consumio:
+
+| escenario | intentos | desenlace observado |
+|---|---|---|
+| `extracted` | 1 | reportado al backend como `extracted` |
+| `timeout` | **3** | `exhausted` tras agotar los reintentos |
+| `unreadable` | **1** | `unreadable`, sin reintentar |
+
+- **Backoff exponencial medido sobre las marcas de tiempo del registro:** 1.02 s entre el
+  intento 1 y el 2, 2.01 s entre el 2 y el 3. Es exponencial de verdad, no declarado.
+- **PT-03 acreditado:** `ZRANGE bull:ocr:failed 0 -1` -> los trabajos 2 y 3 siguen en la
+  cola, y `HGET bull:ocr:2 data` devuelve la carga intacta
+  (`document_public_id`, `storage_path`, `file_hash`, `job_ref`). Agotados los reintentos
+  no se pierde nada: se puede reencolar sin volver a pedirle el documento al prospecto.
+- La cola de notificaciones tambien se probo con el adaptador real: encolado desde
+  `BullMqNotificationSender`, consumido por el worker, **y el destinatario no aparece en
+  el registro** (regla 1).
+- `npm test` en `worker/` -> **10 pruebas aprobadas** (`node --test`, sin Redis ni
+  proveedor: los procesadores reciben dobles).
+- `bash scripts/verificar_avance.sh` -> **T7: 8 ok / 2 falta**; higiene transversal, las 9
+  en OK. Las dos que faltan son el endpoint 202 y su prueba.
+
+**Como se devuelve el resultado al backend.** `adapters/backendClient.js`, en dos modos:
+`log` (desarrollo, no llama a nadie) y `http` (client_credentials contra el propio
+backend, con el token cacheado hasta poco antes de expirar). **El worker llama al backend;
+nunca al reves.** Un puerto abierto en el worker seria una segunda superficie de ataque
+sin la autenticacion ni la auditoria que tiene la API — por eso la verificacion en
+negativo del script no es una formalidad. Hoy corre en modo `log` porque el endpoint que
+recibe el resultado todavia no existe.
+
+**Siguiente paso pendiente (accionable sin contexto):** la capa HTTP del backend.
+1. `Http/Controllers/Api/IdentityDocumentController@store` — recibe el archivo, lo pasa
+   por `UploadedDocumentStore`, ejecuta `UploadIdentityDocument::execute()` (que ya es
+   asincrono y ya existe) y responde **202 Accepted con el identificador de seguimiento**,
+   sin esperar al OCR (Fase 2, Figura 2a).
+2. `Http/Requests/UploadIdentityDocumentRequest` — validacion replicada en servidor
+   (regla 4).
+3. Endpoint de consulta del seguimiento: `GET /identity-documents/{publicId}` con el
+   `ocr_status` del documento.
+4. `POST /internal/ocr-results` — lo que llama `backendClient` en modo `http`. Protegido
+   con `EnsureClientIsResourceOwner` de Passport (client_credentials + scope), y aplica
+   `completeExtraction()` o `failExtraction()` segun el `status` recibido.
+5. Rutas en `routes/api.php`.
+6. Pruebas que cierran T7: la del **202** (el script exige
+   `assertStatus(202)|assertAccepted`), la de PT-03 en el backend, y `BullMqContractTest`
+   —encolar desde PHP y que lo consuma un `Worker` real—, que es lo unico que sostiene el
+   acoplamiento con el formato interno de BullMQ.
+
+---
+
 ## [2026-08-22 10:35] T7 (parcial 1/2) — Productor BullMQ desde PHP, verificado contra un Worker real
 **Estado:** EN PROGRESO — avance parcial commiteado tras un corte de conexion a mitad de
 la tarea. **T7 no esta terminada.** Lo commiteado es el lado que encola; falta el worker

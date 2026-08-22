@@ -1,11 +1,11 @@
 {
   "name": "golsfintech-worker",
   "version": "0.1.0",
-  "description": "Worker asincrono de GolsFintech (OCR y notificaciones) sobre BullMQ",
+  "description": "Worker asincrono de GolsFintech (OCR y notificaciones) sobre BullMQ. Solo consume cola: no expone endpoints HTTP.",
   "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "WORKER_LOG_SILENT=1 node --test \"tests/*.test.js\""
   },
   "keywords": [],
   "author": "",
