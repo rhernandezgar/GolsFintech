@@ -5,6 +5,92 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-23 10:15] T9a (parcial 2/6) — Persistencia de solicitud, cliente y validacion de identidad
+**Estado:** EN PROGRESO — bloque 2 de T9a. Faltan casos de uso (bloque 3) y los
+endpoints P2, P4, P5, P6, P7 (bloques 4 a 6, uno por endpoint).
+**Commit:** ver `git log --oneline` (commit `T9a (parcial): persistencia...`)
+**Evidencia:** `php artisan test` -> 326 pruebas / 882 aserciones en verde (19 nuevas);
+`./vendor/bin/pint --test` limpio.
+
+### Que se hizo
+
+Tres adaptadores Eloquent, sus registros de fila, y el wire-up de los tres puertos:
+
+- `EloquentIdentityValidationRepository` (`save`, `findLatestFor`). `attempts`
+  cuenta por prospecto y no por fila —dos intentos sobre el mismo expediente
+  son 1 y 2, un intento sobre otro prospecto arranca en 1 igual—.
+- `EloquentCreditApplicationRepository` (`save`, `findByProspectId`,
+  `saveSimulation`, `findSimulationByPublicId`, `findLatestSimulationFor`).
+  `save` es idempotente sobre `public_id`: reescribir la solicitud actualiza la
+  fila, no la duplica. La simulacion no guarda el tipo de credito ni el
+  ingreso validado; los lee de la solicitud al reconstruirse.
+- `EloquentCustomerRegistry` (`register`, `attachCard`), con **atomicidad
+  asimetrica** —vease abajo—.
+
+### La decision que hay que tener a la vista: el split atomico
+
+El puerto expone dos metodos porque son dos cosas distintas, pero la propiedad
+que hay que fijar es la asimetria de sus transacciones:
+
+- `register()` escribe cliente y linea **en una sola transaccion**. Un cliente
+  sin linea es un estado que el negocio no contempla, y es el argumento con el
+  que la Fase 2 descarto microservicios. La prueba
+  `register_is_atomic_when_the_line_insert_fails` fuerza un fallo por FK sobre
+  `credit_lines.credit_simulation_id` y exige que la fila del cliente NO quede.
+- `attachCard()` corre **fuera** de esa transaccion. El emisor es un tercero:
+  sostener bloqueos de base de datos durante la latencia de la red seria peor
+  que quedarse sin tarjeta un rato. La prueba
+  `customer_and_line_survive_when_attach_card_fails` provoca el fallo con el
+  UNIQUE de `tokenized_card_number` y exige que cliente y linea sigan intactos.
+  Perder el alta por un fallo del emisor seria peor que quedarse sin tarjeta.
+
+El estado inicial de la tarjeta es `issued` —el default de la migracion— hasta
+que un paso posterior la active. Mantenerlo aqui evita que el adaptador imponga
+una transicion que no le corresponde.
+
+### Bitacora — lo que queda para el bloque 3
+
+Los repos NO llaman al `AuditLogger`. El patron actual (visto en
+`StartProspectCapture`) es que el caso de uso orquesta: save al repo, append al
+logger. En el bloque 3 los tres casos de uso nuevos —`ValidateIdentity`,
+`AcceptCreditOffer`, `LookupCustomer`— dejan cada uno su evento (RF-13). Sin
+esa parte, las escrituras que introduce el bloque 2 no quedan trazadas.
+
+### Detalles menores
+
+- MySQL normaliza el orden de las claves de un JSON al persistirlo, asi que
+  las aserciones sobre `provider_response` van por `assertEqualsCanonicalizing`.
+- Las pruebas viven en `tests/Feature/Persistence/` para separarlas del resto
+  de las Feature; el namespace es `Tests\Feature\Persistence`.
+- `PortBindingTest` NO se ha ampliado a los tres puertos nuevos porque el
+  provider exige tambien un doble en `Tests\Support\Doubles`, y esos dobles no
+  se necesitan hasta el bloque 3. Se anaden alli.
+
+**Siguiente paso pendiente:** T9a (parcial 3/6) — tres casos de uso nuevos.
+
+1. `Application/UseCase/Identity/ValidateIdentity` — orquesta `IdentityValidator`
+   (proveedor) y `IdentityValidationRepository::save`. Al terminar, escribe
+   `identity_validation.performed` en la bitacora con `overall_status` y `folio`
+   (no `curp`, no `rfc`). Si el resultado marca fraude, escribe ademas
+   `identity_validation.fraud_flagged`. Recibe `AuditContext` y `DateTimeImmutable`.
+2. `Application/UseCase/Credit/AcceptCreditOffer` — recibe el `Uuid` publico de
+   la simulacion. Comprueba `isExpired()` (rechaza con
+   `InvalidStateTransitionException`). Llama a `CreditRulesEngine`? No: solo
+   marca la simulacion como aceptada, aprueba la solicitud (`approve`), pide al
+   `CustomerRegistry::register` que abra cliente y linea, y llama al
+   `CardIssuer` + `attachCard` (separado, sin transaccion). Escribe
+   `credit_offer.accepted`, `credit_application.approved`, `customer.registered`,
+   `card.attached` o `card.pending` segun el resultado.
+3. `Application/UseCase/Customer/LookupCustomer` — recibe `customer_number` y
+   devuelve la vista de P7. Escribe `customer.looked_up` con actor e IP.
+
+Los dobles en memoria para los tres puertos van en `tests/Support/Doubles/`
+—`InMemoryIdentityValidationRepository`, `InMemoryCreditApplicationRepository`,
+`InMemoryCustomerRegistry`— y se anaden ademas a `portProvider()` de
+`PortBindingTest`. Pruebas unitarias del caso de uso contra los dobles.
+
+---
+
 ## [2026-08-22 16:45] T9 (parcial 1/3) — Sesion del prospecto: la quinta excepcion a la regla 9
 **Estado:** EN PROGRESO — primer bloque de T9. **T9 no esta terminada:** faltan el resto de
 endpoints del recorrido (P2, P4, P5, P6, P7) y las siete vistas de Vue.

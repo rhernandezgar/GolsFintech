@@ -6,7 +6,10 @@ namespace App\Providers;
 
 use App\Domain\Port\AuditLogger;
 use App\Domain\Port\CardIssuer;
+use App\Domain\Port\CreditApplicationRepository;
+use App\Domain\Port\CustomerRegistry;
 use App\Domain\Port\DocumentRepository;
+use App\Domain\Port\IdentityValidationRepository;
 use App\Domain\Port\IdentityValidator;
 use App\Domain\Port\NotificationSender;
 use App\Domain\Port\OcrService;
@@ -20,7 +23,10 @@ use App\Infrastructure\Ocr\BullMqOcrService;
 use App\Infrastructure\Ocr\OcrScenario;
 use App\Infrastructure\Ocr\SimulatedOcrService;
 use App\Infrastructure\Persistence\Eloquent\EloquentAuditLogger;
+use App\Infrastructure\Persistence\Eloquent\EloquentCreditApplicationRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentCustomerRegistry;
 use App\Infrastructure\Persistence\Eloquent\EloquentDocumentRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentIdentityValidationRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentProspectRepository;
 use App\Infrastructure\Queue\BullMqQueue;
 use Illuminate\Contracts\Foundation\Application;
@@ -86,6 +92,22 @@ final class AdapterServiceProvider extends ServiceProvider
 
         $this->bindPort(AuditLogger::class, 'adapters.persistence', [
             'eloquent' => static fn (Application $app): AuditLogger => $app->make(EloquentAuditLogger::class),
+        ]);
+
+        $this->bindPort(IdentityValidationRepository::class, 'adapters.persistence', [
+            'eloquent' => static fn (Application $app): IdentityValidationRepository => $app->make(
+                EloquentIdentityValidationRepository::class
+            ),
+        ]);
+
+        $this->bindPort(CreditApplicationRepository::class, 'adapters.persistence', [
+            'eloquent' => static fn (Application $app): CreditApplicationRepository => $app->make(
+                EloquentCreditApplicationRepository::class
+            ),
+        ]);
+
+        $this->bindPort(CustomerRegistry::class, 'adapters.persistence', [
+            'eloquent' => static fn (Application $app): CustomerRegistry => $app->make(EloquentCustomerRegistry::class),
         ]);
 
         // --- Servicios externos -------------------------------------------------
