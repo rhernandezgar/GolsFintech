@@ -10,7 +10,10 @@ use App\Domain\Identity\OverallValidationStatus;
 use App\Domain\Identity\VerificationStatus;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Port\CardIssuer;
+use App\Domain\Port\CreditApplicationRepository;
+use App\Domain\Port\CustomerRegistry;
 use App\Domain\Port\DocumentRepository;
+use App\Domain\Port\IdentityValidationRepository;
 use App\Domain\Port\IdentityValidator;
 use App\Domain\Port\NotificationSender;
 use App\Domain\Port\OcrService;
@@ -24,7 +27,10 @@ use App\Infrastructure\Identity\SimulatedIdentityValidator;
 use App\Infrastructure\Notification\SimulatedNotificationSender;
 use App\Infrastructure\Ocr\SimulatedOcrService;
 use App\Infrastructure\Persistence\Eloquent\EloquentAuditLogger;
+use App\Infrastructure\Persistence\Eloquent\EloquentCreditApplicationRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentCustomerRegistry;
 use App\Infrastructure\Persistence\Eloquent\EloquentDocumentRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentIdentityValidationRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentProspectRepository;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -34,7 +40,10 @@ use Tests\Support\Doubles\FakeIdentityValidator;
 use Tests\Support\Doubles\FakeNotificationSender;
 use Tests\Support\Doubles\FakeOcrService;
 use Tests\Support\Doubles\InMemoryAuditLogger;
+use Tests\Support\Doubles\InMemoryCreditApplicationRepository;
+use Tests\Support\Doubles\InMemoryCustomerRegistry;
 use Tests\Support\Doubles\InMemoryDocumentRepository;
+use Tests\Support\Doubles\InMemoryIdentityValidationRepository;
 use Tests\Support\Doubles\InMemoryProspectRepository;
 use Tests\TestCase;
 
@@ -57,6 +66,15 @@ final class PortBindingTest extends TestCase
             'ProspectRepository' => [ProspectRepository::class, EloquentProspectRepository::class],
             'DocumentRepository' => [DocumentRepository::class, EloquentDocumentRepository::class],
             'AuditLogger' => [AuditLogger::class, EloquentAuditLogger::class],
+            'IdentityValidationRepository' => [
+                IdentityValidationRepository::class,
+                EloquentIdentityValidationRepository::class,
+            ],
+            'CreditApplicationRepository' => [
+                CreditApplicationRepository::class,
+                EloquentCreditApplicationRepository::class,
+            ],
+            'CustomerRegistry' => [CustomerRegistry::class, EloquentCustomerRegistry::class],
             'OcrService' => [OcrService::class, SimulatedOcrService::class],
             'IdentityValidator' => [IdentityValidator::class, SimulatedIdentityValidator::class],
             'CardIssuer' => [CardIssuer::class, SimulatedCardIssuer::class],
@@ -92,6 +110,9 @@ final class PortBindingTest extends TestCase
             ProspectRepository::class => InMemoryProspectRepository::class,
             DocumentRepository::class => InMemoryDocumentRepository::class,
             AuditLogger::class => InMemoryAuditLogger::class,
+            IdentityValidationRepository::class => InMemoryIdentityValidationRepository::class,
+            CreditApplicationRepository::class => InMemoryCreditApplicationRepository::class,
+            CustomerRegistry::class => InMemoryCustomerRegistry::class,
             OcrService::class => FakeOcrService::class,
             IdentityValidator::class => FakeIdentityValidator::class,
             CardIssuer::class => FakeCardIssuer::class,

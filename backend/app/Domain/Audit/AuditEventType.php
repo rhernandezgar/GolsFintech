@@ -22,6 +22,7 @@ enum AuditEventType: string
     case SessionEnded = 'auth.session_ended';
     case AuthorizationDenied = 'auth.authorization_denied';
     case CreditApplicationViewed = 'credit_application.viewed';
+    case CustomerLookedUp = 'customer.looked_up';
     case AuditLogViewed = 'audit_log.viewed';
 
     case ProspectStarted = 'prospect.started';
@@ -36,10 +37,15 @@ enum AuditEventType: string
     case IdentityValidationSucceeded = 'identity.validation_succeeded';
     case IdentityValidationRejected = 'identity.validation_rejected';
     case CreditApplicationOpened = 'credit_application.opened';
+    case CreditApplicationApproved = 'credit_application.approved';
     case CreditSimulationGenerated = 'credit_simulation.generated';
     case CreditSimulationAccepted = 'credit_simulation.accepted';
     case CreditSimulationRejected = 'credit_simulation.rejected';
     case CustomerCreated = 'customer.created';
     case CreditLineOpened = 'credit_line.opened';
     case CardIssued = 'card.issued';
+    // Cuando el emisor externo falla, el cliente y su linea ya estan creados y
+    // el credito autorizado no se pierde: el expediente queda en un estado
+    // recuperable, sin tarjeta, y hace falta un evento propio para saberlo.
+    case CardIssuanceFailed = 'card.issuance_failed';
 }

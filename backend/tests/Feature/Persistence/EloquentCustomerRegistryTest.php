@@ -246,6 +246,43 @@ final class EloquentCustomerRegistryTest extends TestCase
         }
     }
 
+    public function test_find_by_customer_number_returns_customer_line_and_card(): void
+    {
+        $registration = $this->makeRegistration();
+        $customer = $this->registry()->register($registration);
+        $card = $this->issuedCard('tok_visa_LOOKUP');
+        $this->registry()->attachCard($customer, $card, new DateTimeImmutable('2026-08-22 12:05:00'));
+
+        $found = $this->registry()->findByCustomerNumber($registration->customerNumber);
+
+        $this->assertNotNull($found);
+        $this->assertSame($customer->customerId, $found->customerId);
+        $this->assertSame('50000.00', $found->authorizedAmount);
+        $this->assertSame('4242', $found->cardLastFour);
+        $this->assertSame('visa', $found->cardBrand);
+    }
+
+    public function test_find_by_customer_number_returns_null_when_absent(): void
+    {
+        $this->assertNull(
+            $this->registry()->findByCustomerNumber(
+                Folio::generate('CU', new DateTimeImmutable('2026-08-22 12:00:00'))
+            )
+        );
+    }
+
+    public function test_find_by_customer_number_omits_the_card_when_never_attached(): void
+    {
+        $registration = $this->makeRegistration();
+        $this->registry()->register($registration);
+
+        $found = $this->registry()->findByCustomerNumber($registration->customerNumber);
+
+        $this->assertNotNull($found);
+        $this->assertNull($found->cardLastFour);
+        $this->assertNull($found->cardStatus);
+    }
+
     public function test_customer_and_line_survive_when_attach_card_fails(): void
     {
         $registration = $this->makeRegistration();

@@ -5,6 +5,107 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-23 11:00] T9a (parcial 3/6) — Tres casos de uso del recorrido: ValidateIdentity, AcceptCreditOffer, LookupCustomer
+**Estado:** EN PROGRESO — bloque 3 de T9a. Faltan endpoints P2, P4, P5, P6 y P7
+(bloques 4 a 6, uno por endpoint) y las siete vistas de Vue (T9b, tarea aparte).
+**Commit:** ver `git log --oneline` (commit `T9a (parcial): tres casos de uso...`)
+**Evidencia:** `php artisan test` -> 350 pruebas / 947 aserciones en verde (24 nuevas);
+`./vendor/bin/pint --test` limpio; `bash scripts/verificar_avance.sh` ->
+**85 OK / 6 FALTA / 2 REVISAR** (identico al baseline anterior; T9 sigue en FALTA
+porque su criterio es las 7 vistas de Vue).
+
+### Que se hizo
+
+- `Application/UseCase/Identity/ValidateIdentity` — P4. Orquesta `IdentityValidator`
+  (proveedor) y `IdentityValidationRepository::save`. Emite dos eventos: primero
+  `identity.validation_requested`, y luego `_succeeded` o `_rejected` segun el
+  desenlace. La CURP NO viaja al log en ninguno de los dos.
+- `Application/UseCase/Credit/AcceptCreditOffer` — P6. Orquesta la aceptacion de
+  la simulacion, la aprobacion de la solicitud, el alta del cliente y su linea
+  (transaccion en el registry) y la emision de la tarjeta (fuera de esa
+  transaccion). Emite hasta cinco eventos en orden y, si el emisor de tarjetas
+  falla, cierra con `card.issuance_failed` y devuelve el cliente sin tarjeta:
+  el credito ya autorizado no se pierde por un fallo del tercero.
+- `Application/UseCase/Customer/LookupCustomer` — P7. Emite `customer.looked_up`
+  con actor e IP cuando encuentra; `auth.authorization_denied` con
+  `reason=customer_not_found` cuando no —lo que un barrido por numero delata—.
+- Puerto `CustomerRegistry::findByCustomerNumber` (lectura por identidad publica),
+  implementado en `EloquentCustomerRegistry` y en `InMemoryCustomerRegistry`.
+- Tres tipos de evento nuevos en `AuditEventType`:
+  `credit_application.approved`, `card.issuance_failed`, `customer.looked_up`.
+  La columna es `string(60)`, sin migracion.
+- Tres dobles en memoria: `InMemoryIdentityValidationRepository`,
+  `InMemoryCreditApplicationRepository`, `InMemoryCustomerRegistry`. Los tres
+  reproducen el comportamiento observable del adaptador Eloquent: identificadores
+  crecientes en orden, `attempts` por prospecto, idempotencia sobre `public_id`.
+- `PortBindingTest`: los tres puertos entran en `portProvider()` y en la tabla
+  de dobles. 25 pruebas en verde.
+
+### Las tres invariantes que fijan las pruebas de AcceptCreditOffer
+
+1. **CWE-639 cerrado.** `a_token_from_another_prospect_cannot_accept_the_simulation`
+   crea dos prospectos, uno duenio y otro extranio, y prueba que el extranio no
+   puede aceptar la simulacion ajena aunque conozca su UUID. Cierre: la
+   solicitud del prospecto autenticado no coincide con el `credit_application_id`
+   de la simulacion, y el use case rechaza.
+2. **Un evento por escritura, en orden (RF-13).** `the_happy_path_emits_the_five_events_in_order`
+   contrasta la secuencia contra
+   `simulation.accepted -> application.approved -> customer.created -> line.opened -> card.issued`.
+   Si algun paso deja de escribir, la comparacion cambia.
+3. **Asimetria transaccional (Fase 2).** `card_issuance_failure_leaves_customer_and_line_and_records_the_event`
+   provoca el fallo del emisor y comprueba que cliente y linea siguen ahi, que la
+   tarjeta NO, y que el ultimo evento es `card.issuance_failed`. Es la
+   propiedad por la que el credito autorizado no se pierde por un fallo del
+   tercero.
+
+Ademas, `the_card_issued_event_never_carries_the_token` fija que el token no
+viaja al log ni por descuido: solo `last_four` y `brand`.
+
+### Decisiones que conviene tener a la vista
+
+**El "verificado" completo exige documento.** `FakeIdentityValidator::willVerify`
+devuelve `documentValidity=Pending` sin documento, y el conjunto queda Pending:
+la prueba del "verificado" en `ValidateIdentityTest` pasa por
+`storedDocument()` para que los cuatro criterios queden en Verified. Es fiel al
+disenio —la vigencia del documento no se puede evaluar si no hay documento— y
+el use case no fuerza un veredicto favorable sin evidencia.
+
+**El estado inicial de la tarjeta es `issued`.** El default de la migracion. Un
+paso posterior la activa; el adaptador de persistencia no impone la transicion.
+
+**`SimulateCredit` todavia no persiste.** El caso de uso actual solo devuelve
+el `CreditOfferOutput`; no llama a `saveSimulation`. Para que
+`AcceptCreditOffer` funcione contra la API, el endpoint de P5 (bloque 5) debera
+completar `SimulateCredit` con `save(application)` + `saveSimulation(simulation)`.
+Las pruebas del bloque 3 no lo necesitan porque usan dobles en memoria y
+persisten la simulacion directamente en `setUp`.
+
+**El acceso al numero de cliente por P7 no se filtra por autorizacion en el use
+case.** El endpoint es el que impone rol y politica (`Permission::ReadCustomer`,
+que aparecera en el bloque 6). El use case solo hace la lookup y deja rastro.
+Meter la autorizacion aqui obligaria a duplicar la logica de scopes y rompeia
+la simetria con `LookupProspect`.
+
+**Siguiente paso pendiente:** T9a (parcial 4/6) — endpoint P2.
+
+1. `Http/Controllers/Api/ProspectController::update` (o metodo aparte) que
+   invoca `CaptureProspectData` y `ConfirmProspectData` desde dos rutas:
+   `PATCH /prospects/me` (captura) y `POST /prospects/me/confirm` (confirmacion).
+2. `Http/Requests/Prospect/CaptureProspectDataRequest`,
+   `Http/Requests/Prospect/ConfirmProspectDataRequest`. Reglas: CURP con digito,
+   RFC opcional, sexo, edad, ingreso mensual.
+3. `Policies/ProspectPolicy` con `updateOwn` — el expediente sale del token, no
+   de la URL, asi que la politica compara `$user->prospect_id === $prospect->id`.
+4. Registro en `bootstrap/app.php` del middleware si hace falta, ampliacion de
+   `routes/api.php` bajo el grupo con scope `prospect-session`.
+5. Pruebas: `ProspectDataCaptureTest` con casos 401 sin token, 403 sobre
+   expediente ajeno (fabricar dos prospectos, token del primero, PATCH del
+   segundo), 422 con CURP mal formada, 200 con captura completa. Metadata en
+   `auth.authorization_denied` cuando 403 (RS-06.a). Actualizar la lista cerrada
+   de `ApiAccessControlTest::the_endpoints_are_authenticated_by_default`.
+
+---
+
 ## [2026-08-23 10:15] T9a (parcial 2/6) — Persistencia de solicitud, cliente y validacion de identidad
 **Estado:** EN PROGRESO — bloque 2 de T9a. Faltan casos de uso (bloque 3) y los
 endpoints P2, P4, P5, P6, P7 (bloques 4 a 6, uno por endpoint).

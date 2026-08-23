@@ -7,6 +7,7 @@ namespace App\Domain\Port;
 use App\Domain\Card\IssuedCard;
 use App\Domain\Customer\NewCustomerRegistration;
 use App\Domain\Customer\RegisteredCustomer;
+use App\Domain\Shared\Folio;
 use DateTimeImmutable;
 
 /**
@@ -32,4 +33,14 @@ interface CustomerRegistry
         IssuedCard $card,
         DateTimeImmutable $issuedAt,
     ): RegisteredCustomer;
+
+    /**
+     * Lectura por numero de cliente para P7 (RF-11).
+     *
+     * El numero es la identidad publica del cliente y la unica clave por la que
+     * lo busca soporte. La operacion es de lectura, no de escritura, y por eso
+     * la respuesta trae solo los ultimos cuatro digitos de la tarjeta y su
+     * marca —el token nunca sale de la base—.
+     */
+    public function findByCustomerNumber(Folio $customerNumber): ?RegisteredCustomer;
 }
