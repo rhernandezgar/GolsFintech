@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Application\UseCase\Credit\SimulateCredit;
 use App\Domain\Audit\AuditChain;
 use App\Domain\Credit\AmortizationCalculator;
 use App\Domain\Credit\CreditPolicy;
 use App\Domain\Credit\CreditRulesEngine;
+use App\Domain\Port\AuditLogger;
+use App\Domain\Port\CreditApplicationRepository;
+use App\Domain\Port\IdentityValidationRepository;
+use App\Domain\Port\ProspectRepository;
 use App\Infrastructure\Security\PiiHasher;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -34,6 +40,19 @@ final class AppServiceProvider extends ServiceProvider
         $this->app->singleton(CreditRulesEngine::class, static fn ($app): CreditRulesEngine => new CreditRulesEngine(
             $app->make(CreditPolicy::class),
             new AmortizationCalculator,
+        ));
+
+        // SimulateCredit no es un puerto: es un caso de uso. Se registra aqui
+        // porque su constructor recibe un `int` (el TTL de la simulacion, en
+        // segundos) que el autowiring no sabe resolver. Los demas casos de uso
+        // se resuelven solos porque sus dependencias son todas objetos.
+        $this->app->bind(SimulateCredit::class, static fn (Application $app): SimulateCredit => new SimulateCredit(
+            prospects: $app->make(ProspectRepository::class),
+            validations: $app->make(IdentityValidationRepository::class),
+            applications: $app->make(CreditApplicationRepository::class),
+            rulesEngine: $app->make(CreditRulesEngine::class),
+            auditLogger: $app->make(AuditLogger::class),
+            simulationTtlSeconds: (int) $app['config']->get('credit.simulation_ttl_seconds', 1800),
         ));
     }
 

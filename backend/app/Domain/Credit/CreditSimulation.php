@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Credit;
 
+use App\Domain\Exception\CreditSimulationExpiredException;
 use App\Domain\Exception\InvalidStateTransitionException;
 use App\Domain\Shared\Folio;
 use App\Domain\Shared\Uuid;
@@ -136,7 +137,9 @@ final class CreditSimulation
         if ($this->isExpired($now)) {
             $this->simulationStatus = SimulationStatus::Expired;
 
-            throw new InvalidStateTransitionException('La simulacion caduco y debe recalcularse.');
+            // Excepcion propia: caducar no es un error de flujo, es una regla
+            // de negocio con codigo estable para la API.
+            throw new CreditSimulationExpiredException('La simulacion caduco y debe recalcularse.');
         }
     }
 }

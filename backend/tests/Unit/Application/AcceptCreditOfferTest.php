@@ -13,7 +13,7 @@ use App\Domain\Credit\CreditOffer;
 use App\Domain\Credit\CreditSimulation;
 use App\Domain\Credit\CreditType;
 use App\Domain\Credit\Term;
-use App\Domain\Exception\InvalidStateTransitionException;
+use App\Domain\Exception\CreditSimulationExpiredException;
 use App\Domain\Identity\Curp;
 use App\Domain\Prospect\CaptureMethod;
 use App\Domain\Prospect\Prospect;
@@ -186,7 +186,9 @@ final class AcceptCreditOfferTest extends TestCase
             expiresAt: new DateTimeImmutable('2026-08-22 11:59:00'),
         );
 
-        $this->expectException(InvalidStateTransitionException::class);
+        // Excepcion propia: caducar no es un error de flujo, es una regla de
+        // negocio con su propio codigo estable para la API.
+        $this->expectException(CreditSimulationExpiredException::class);
         $this->useCase()->execute(
             $simulation->publicId(),
             $prospect->publicId(),

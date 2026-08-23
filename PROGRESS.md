@@ -5,6 +5,81 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-23 11:30] T9a (parcial 3.5/6) — Persistencia de la simulacion antes de arrancar P2
+**Estado:** EN PROGRESO — pieza puente entre el bloque 3 y el 4 de T9a, encargada
+por el usuario para no dejar un eslabon abierto entre P5 y P6.
+**Commit:** ver `git log --oneline` (commit `T9a (parcial): persistencia de la simulacion...`)
+**Evidencia:** `php artisan test` -> 355 pruebas / 965 aserciones en verde (5 nuevas);
+`./vendor/bin/pint --test` limpio.
+
+### Por que existe este bloque
+
+Al cerrar el bloque 3, `SimulateCredit` seguia devolviendo el `CreditOfferOutput`
+pero no persistia nada. `AcceptCreditOffer` cargaba la simulacion por su UUID
+desde el repositorio, es decir, contra una fila que en el flujo real no existia.
+Los tests unitarios lo tapaban con dobles en memoria: cada uno guardaba su
+simulacion en `setUp`. El hueco solo iba a aparecer al armar el endpoint de P5.
+
+### Que se hizo
+
+- `SimulateCredit` recibe ahora `IdentityValidationRepository` y
+  `CreditApplicationRepository`. Comprueba que hay identidad verificada (Fase 2:
+  P4 antes de P5, rechaza con `IdentityNotVerifiedException`), abre la solicitud
+  si no existe, la avanza a `pre_approved` con el `identity_validation_id` de
+  la validacion, la guarda, crea la simulacion con vigencia `now + TTL` y la
+  persiste. El evento `credit_simulation.generated` viaja ahora con
+  `simulation_public_id`, `simulation_folio` y `expires_at`.
+- `config/credit.php` (nuevo): `simulation_ttl_seconds` con default 1800 s
+  (30 min). Lo lee `AppServiceProvider` al enlazar el caso de uso: el TTL viaja
+  como `int` en el constructor y el use case no toca `config()` (regla del
+  test de arquitectura, sigue verde).
+- `Domain/Exception/CreditSimulationExpiredException` (nueva): codigo estable
+  `CREDIT_SIMULATION_EXPIRED`, mensaje al usuario que pide recalcular. Se
+  separa de `InvalidStateTransitionException` a proposito —caducar no es un
+  error de flujo, es una regla de negocio con mensaje propio; mezclarlas
+  obligaria al endpoint a inspeccionar el texto para decidir el mensaje—.
+  `CreditSimulation::accept()` la lanza cuando `isExpired`.
+- `CreditOfferOutput` incorpora `simulationPublicId`, `simulationFolio` y
+  `expiresAt`. Sin ellos, la SPA no puede referenciar en P6 lo que se le
+  mostro en P5.
+- Prueba de integracion nueva `SimulateThenAcceptTest` (contra MySQL, sin
+  dobles): recorre P1 -> P4 -> P5 -> P6 y comprueba que la simulacion
+  persistida se recupera por su UUID y se acepta. Cuatro casos: happy path
+  (cliente, linea y tarjeta persistidas), simulacion caducada por TTL,
+  TTL configurable (a 60 s), y el mismo CWE-639 del bloque 3 en integracion.
+- `ProspectJourneyTest` actualizado: ahora incluye `ValidateIdentity` antes de
+  `SimulateCredit`, y la secuencia de eventos esperados pasa a
+  `... -> identity.validation_requested -> identity.validation_succeeded ->
+  credit_simulation.generated`. Se anade tambien
+  `test_simulating_without_a_verified_identity_is_refused`.
+- Ajuste minimo en `AcceptCreditOfferTest`: el test de caducidad ahora espera
+  `CreditSimulationExpiredException` en vez de `InvalidStateTransitionException`.
+
+### Decisiones que conviene tener a la vista
+
+**La transicion Draft -> UnderReview -> PreApproved no se salta.** El use case
+avanza la solicitud paso a paso (`submitForReview` y luego `preApprove`),
+respetando las TRANSITIONS del dominio. La alternativa —permitir Draft ->
+PreApproved directo— habria simplificado el codigo, pero rompe la propiedad de
+que una solicitud sin `identity_validation_id` no puede estar pre-aprobada, y
+esa propiedad no es cosmetica: es la que impide que el motor de reglas se
+aplique sobre datos que RENAPO no confirmo.
+
+**Simulaciones repetidas son legitimas.** Si la solicitud ya esta en
+`pre_approved`, el use case no vuelve a llamar a `preApprove` y solo persiste
+la simulacion nueva. Recalcular el plazo o el monto era un requisito de P5;
+prohibirlo obligaria al prospecto a abandonar y recomenzar.
+
+**El TTL evita aceptar ofertas con parametros de riesgo caducados.** Es la
+precision de negocio que pedia el usuario. La caducidad se compara contra el
+reloj del servidor (`now` que llega al use case), no del navegador. Un `now`
+adelantado desde el cliente no evita la caducidad.
+
+**Siguiente paso pendiente:** T9a (parcial 4/6) — endpoint P2. Sin cambios
+frente a la nota del bloque 3.
+
+---
+
 ## [2026-08-23 11:00] T9a (parcial 3/6) — Tres casos de uso del recorrido: ValidateIdentity, AcceptCreditOffer, LookupCustomer
 **Estado:** EN PROGRESO — bloque 3 de T9a. Faltan endpoints P2, P4, P5, P6 y P7
 (bloques 4 a 6, uno por endpoint) y las siete vistas de Vue (T9b, tarea aparte).
