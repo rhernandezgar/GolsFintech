@@ -509,6 +509,49 @@ else
 fi
 endtask
 
+# ===================================================================== T9a ======
+# API del recorrido del prospecto y del cliente (P1 a P7). Autorizada por el
+# usuario el 2026-08-24 tras el cierre de T9a: mide dos cosas objetivas y
+# baratas, sin acoplarse a los nombres internos de controladores ni a la
+# nomenclatura de las pruebas.
+#
+# (1) las 11 rutas del recorrido estan registradas -por `name`, que es estable
+# frente a renombres-. (2) la prueba que impide que una ruta nueva se publique
+# sin autenticacion sigue verde. La (2) no es redundante con `artisan test`
+# corrido aparte: el script se ejecuta entre tareas justo para no tener que
+# correr la suite entera, y esta es la unica prueba cuyo verde acredita la
+# regla de seguridad no negociable 9.
+task "T9a" "API del recorrido del prospecto y del cliente" \
+     "Las 11 rutas registradas y sin_token_401 en verde"
+
+T9A_ROUTES="prospects.store prospects.me.show prospects.me.update prospects.me.confirm \
+            prospects.me.session.renew identity-documents.store identity-documents.show \
+            identity-validations.store credit-simulations.store credit-simulations.accept \
+            customers.show"
+
+if [ "$HAS_PHP" = "1" ]; then
+  ROUTES_JSON="$(artisan route:list --json 2>/dev/null)"
+  MISSING=""
+  for name in $T9A_ROUTES; do
+    printf '%s' "$ROUTES_JSON" | grep -q "\"name\":[[:space:]]*\"$name\"" || MISSING="$MISSING $name"
+  done
+  [ -z "$MISSING" ] && ok "Las 11 rutas del recorrido estan registradas por su alias" \
+                    || no "Rutas ausentes de route:list (buscadas por alias):$MISSING"
+
+  # sin_token_401. Es la prueba que impide publicar una ruta nueva sin
+  # autenticacion: si alguien anadiera un endpoint y actualizara la lista de
+  # arriba pero olvidara declararlo autenticado, esta prueba se pone roja.
+  OUT="$(artisan test --filter='without_a_token_every_endpoint_answers_401')"; RC=$?
+  if [ $RC -ne 0 ]; then
+    no "sin_token_401 con fallos (codigo de salida $RC)"
+  else
+    ok "sin_token_401 en verde: ninguna ruta nueva se publico sin autenticacion"
+  fi
+else
+  warn "No se puede acreditar T9a sin php (route:list y artisan test)"
+fi
+endtask
+
 # ====================================================================== T9 ======
 task "T9" "Las 7 vistas de Vue, navegables de extremo a extremo" \
      "Las 7 rutas responden en el navegador"
