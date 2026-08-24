@@ -108,6 +108,17 @@ return [
     ],
 
     /*
+    | Version del contrato de credito aceptada al autorizar en P6. Se guarda
+    | en `customers.contract_version` junto con `consent_at` y sirve de
+    | soporte probatorio frente a un eventual repudio: si el contrato
+    | cambia, esta version cambia con el y los consentimientos anteriores
+    | siguen diciendo a que texto se referian.
+    */
+    'contract' => [
+        'version' => env('CONTRACT_VERSION', '2026-08-01'),
+    ],
+
+    /*
     |---------------------------------------------------------------------------
     | Control anti-automatizacion (CAPTCHA)
     |---------------------------------------------------------------------------

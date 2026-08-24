@@ -82,6 +82,10 @@ final class ApiAccessControlTest extends TestCase
         // P5. La simulacion depende del motor de reglas sobre datos del
         // prospecto: sin token, sin expediente sobre el que calcular.
         $this->postJson('/api/v1/credit-simulations', ['term_months' => 12])->assertStatus(401);
+        // P6. Aceptacion: el token es lo que acredita titularidad sobre la
+        // simulacion (CWE-639 cerrado en el use case).
+        $this->postJson('/api/v1/credit-simulations/00000000-0000-0000-0000-000000000000/accept')
+            ->assertStatus(401);
     }
 
     #[Test]

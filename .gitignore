@@ -54,3 +54,4 @@ Thumbs.db
 # ---- Artefactos temporales del proyecto ----
 /tmp/
 *.log
+verificar.txt

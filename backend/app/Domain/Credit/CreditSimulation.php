@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Credit;
 
+use App\Domain\Exception\CreditSimulationAlreadyDecidedException;
 use App\Domain\Exception\CreditSimulationExpiredException;
-use App\Domain\Exception\InvalidStateTransitionException;
 use App\Domain\Shared\Folio;
 use App\Domain\Shared\Uuid;
 use DateTimeImmutable;
@@ -131,7 +131,11 @@ final class CreditSimulation
     private function assertDecidable(DateTimeImmutable $now): void
     {
         if ($this->simulationStatus !== SimulationStatus::Proposed) {
-            throw new InvalidStateTransitionException('La simulacion ya fue decidida.');
+            // Excepcion propia: doble aceptacion (o aceptacion tras rechazo,
+            // o expiracion previa) es un caso de reintento con mensaje al
+            // usuario propio, no un error de flujo generico. Sin este
+            // control, un doble click podria crear dos clientes.
+            throw new CreditSimulationAlreadyDecidedException('La simulacion ya fue decidida.');
         }
 
         if ($this->isExpired($now)) {

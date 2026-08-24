@@ -145,6 +145,14 @@ Route::middleware('auth:api')->group(function (): void {
         ->post('/credit-simulations', [CreditSimulationController::class, 'store'])
         ->name('credit-simulations.store');
 
+    // P6. Aceptacion. UUID de la simulacion en la URL (es lo que el cliente
+    // referencia); la titularidad la comprueba el use case contra el token
+    // (CWE-639). Al aceptar se revoca el token de prospecto y se emite uno
+    // de cliente.
+    Route::middleware('scopes:'.ProspectSessionIssuer::PROSPECT_SCOPE)
+        ->post('/credit-simulations/{simulation}/accept', [CreditSimulationController::class, 'accept'])
+        ->name('credit-simulations.accept');
+
     // Recursos de negocio. read-only se aplica al grupo entero y no ruta por
     // ruta: que un rol de solo lectura no escriba es una propiedad del rol, y
     // una ruta nueva que olvidara declararlo naceria desprotegida.
