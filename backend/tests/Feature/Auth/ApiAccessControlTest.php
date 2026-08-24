@@ -79,6 +79,9 @@ final class ApiAccessControlTest extends TestCase
         // P4. La validacion de identidad tambien lo es: consulta a INE y
         // RENAPO sobre datos personales, y sin token no hay expediente.
         $this->postJson('/api/v1/identity-validations')->assertStatus(401);
+        // P5. La simulacion depende del motor de reglas sobre datos del
+        // prospecto: sin token, sin expediente sobre el que calcular.
+        $this->postJson('/api/v1/credit-simulations', ['term_months' => 12])->assertStatus(401);
     }
 
     #[Test]

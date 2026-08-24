@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\CreditApplicationController;
+use App\Http\Controllers\Api\CreditSimulationController;
 use App\Http\Controllers\Api\IdentityDocumentController;
 use App\Http\Controllers\Api\IdentityValidationController;
 use App\Http\Controllers\Api\MeController;
@@ -136,6 +137,13 @@ Route::middleware('auth:api')->group(function (): void {
     Route::middleware('scopes:'.ProspectSessionIssuer::PROSPECT_SCOPE)
         ->post('/identity-validations', [IdentityValidationController::class, 'store'])
         ->name('identity-validations.store');
+
+    // P5. Simulacion del credito. Exige identidad verificada previa (SimulateCredit
+    // lo comprueba). Un deferred por caida del proveedor NO simula: es distinto de
+    // rechazado, pero tampoco es verificado.
+    Route::middleware('scopes:'.ProspectSessionIssuer::PROSPECT_SCOPE)
+        ->post('/credit-simulations', [CreditSimulationController::class, 'store'])
+        ->name('credit-simulations.store');
 
     // Recursos de negocio. read-only se aplica al grupo entero y no ruta por
     // ruta: que un rol de solo lectura no escriba es una propiedad del rol, y
