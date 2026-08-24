@@ -86,6 +86,8 @@ final class ApiAccessControlTest extends TestCase
         // simulacion (CWE-639 cerrado en el use case).
         $this->postJson('/api/v1/credit-simulations/00000000-0000-0000-0000-000000000000/accept')
             ->assertStatus(401);
+        // P7. Consulta administrativa: rol requerido, y sin token no hay rol.
+        $this->getJson('/api/v1/customers/CU-20260822-ABC12345')->assertStatus(401);
     }
 
     #[Test]

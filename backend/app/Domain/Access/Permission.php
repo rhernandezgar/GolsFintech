@@ -60,6 +60,12 @@ enum Permission: string
     /** Exige reautenticacion con segundo factor (Fase 3 §4.9, pantalla P6). */
     case ViewOwnFullCard = 'card.view_full.own';
 
+    // --- Consulta de clientes (P7, panel administrativo) --------------------
+    // La vista de P7 la usa el personal administrativo con necesidad de dar
+    // seguimiento a un cliente: admin, auditor y analista de riesgos.
+    // Prospecto y cliente NO lo tienen -su alcance es solo lo propio-.
+    case ViewAnyCustomer = 'customer.view.any';
+
     /**
      * Un permiso de escritura modifica estado; el resto solo lee.
      *

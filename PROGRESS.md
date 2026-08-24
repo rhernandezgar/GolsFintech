@@ -5,6 +5,108 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-24 16:10] T9a (6/6) — Endpoints P5, P6 y P7. **T9a COMPLETO**
+**Estado:** COMPLETADO — el recorrido HTTP del prospecto y del cliente esta
+entero. Faltan las 7 vistas de Vue (T9b, tarea aparte); solo con ellas T9
+cerrara en el script.
+**Commits:**
+- P5 (`50eac73`) — `T9a (parcial): endpoint P5 con precondicion de identidad verificada`.
+- P6 (`853426d`) — `T9a (parcial): endpoint P6 con las tres verificaciones y reemision de token`.
+- P7 (este commit) — `T9a: endpoint P7 con autorizacion por campo y consulta administrativa`.
+
+**Evidencia:** `php artisan test` -> 397 pruebas / 1132 aserciones en verde
+(20 nuevas: 6 en P5, 6 en P6, 8 en P7); `./vendor/bin/pint --test` limpio;
+`bash scripts/verificar_avance.sh` -> **86 OK / 6 FALTA / 2 REVISAR**, sin
+cambios respecto al bloque 5.
+
+### P5 — POST /api/v1/credit-simulations (commit 50eac73)
+
+Bajo `scopes:prospect-session`. La precondicion "identidad verificada" la
+impone `SimulateCredit`: un prospecto en `deferred` NO simula. Distinto de
+rechazado, pero tampoco es verificado: consultar el motor sobre datos sin
+RENAPO daria una oferta que P6 no podria autorizar.
+
+Respuesta 201 con `simulation_public_id`, `simulation_folio` y `expires_at`.
+Es lo que P6 necesita para poder aceptarla; sin ellos no habria referencia
+entre pantallas.
+
+Seis pruebas: 401, 422 plazo fuera de catalogo, 422 con `deferred`, 422 sin
+validacion previa, 422 sin `data_confirmed`, 201 en camino feliz.
+
+### P6 — POST /api/v1/credit-simulations/{uuid}/accept (commit 853426d)
+
+Tres verificaciones:
+1. **Titularidad.** Simulacion de otro prospecto -> 403 con mensaje generico
+   identico al de las politicas. No revela si el recurso existe (CWE-639).
+2. **Vigencia.** Simulacion caducada -> 422 `CREDIT_SIMULATION_EXPIRED`.
+3. **Doble aceptacion.** Nueva `CreditSimulationAlreadyDecidedException`
+   con codigo `CREDIT_SIMULATION_ALREADY_DECIDED`. Un doble click de la SPA
+   no crea dos clientes.
+
+Reemision de token (quinta precision del bloque 1):
+`ProspectSessionIssuer::promoteToCustomer` revoca todos los tokens de
+prospecto y emite uno con alcance `customer-session`. Verificado consultando
+`oauth_access_tokens` tras la aceptacion: la unica fila viva lleva
+`customer-session` y ninguna `prospect-session`.
+
+Cambio adicional en el controller: `now()->toImmutable()` en vez de
+`new DateTimeImmutable`. Con el reloj de Laravel, `$this->travel(...)`
+alcanza al controller. Corregido tras un bug real en la primera version de
+las pruebas: mezclaba `new DateTimeImmutable` en el controller con horas
+hardcoded en el test y todas las simulaciones aparecian caducadas.
+
+Nueva clave `security.contract.version` (env `CONTRACT_VERSION`, default
+`2026-08-01`). Antes se inventaba en el controller un `'v1.0'` hardcoded.
+
+### P7 — GET /api/v1/customers/{customerNumber} (este commit)
+
+Es el **unico** endpoint del bloque 6 que consume un rol administrativo, no
+el token de prospecto. Middleware `can:customer.view.any`.
+
+**Permiso nuevo `Permission::ViewAnyCustomer = 'customer.view.any'`**,
+asignado a `Admin`, `Auditor` y `RiskAnalyst`. Prospect y Customer NO lo
+tienen (su alcance es solo lo propio); 403 con esos roles.
+
+**Autorizacion por campo (RS-05):** `declared_income` viaja SOLO al analista
+de riesgos (`ViewAnyDeclaredIncome`). Admin y auditor reciben 200 sin ese
+campo; el analista de riesgos lo recibe. Filtrado en el controlador, sin
+duplicar endpoints por rol.
+
+**Auditoria del acceso (RS-06.a):** `LookupCustomer` emite
+`customer.looked_up` cuando encuentra y `auth.authorization_denied` con
+`reason=customer_not_found` cuando no —lo que un barrido por numero
+delataria (R-01)—.
+
+Ocho pruebas: 401, 403 prospecto, 403 cliente, 200 admin sin ingreso, 200
+auditor sin ingreso (y `isReadOnly()`), 200 risk analyst con ingreso, 404
+con evento `authorization_denied`, evento `customer.looked_up` acreditado.
+
+### Rutas registradas del recorrido completo
+
+```
+POST   /api/v1/prospects                                    (P1)
+GET    /api/v1/prospects/me                                 (estado)
+POST   /api/v1/prospects/me/session                         (renovar)
+PATCH  /api/v1/prospects/me                                 (P2 captura)
+POST   /api/v1/prospects/me/confirm                         (P2 confirm)
+POST   /api/v1/identity-documents                           (P3 alta)
+GET    /api/v1/identity-documents/{id}                      (P3 estado)
+POST   /api/v1/identity-validations                         (P4)
+POST   /api/v1/credit-simulations                           (P5)
+POST   /api/v1/credit-simulations/{uuid}/accept             (P6)
+GET    /api/v1/customers/{customerNumber}                   (P7)
+```
+
+Cada una tiene prueba de 401 sin token (recorridas por
+`ApiAccessControlTest::without_a_token_every_endpoint_answers_401`) y prueba
+de 403 dedicada, por objeto o por rol.
+
+**Siguiente paso pendiente:** T9b — las 7 vistas de Vue. Tarea aparte;
+diseno en Fase 2 §§P1-P7. Sin cambios respecto a la nota de bloques
+anteriores.
+
+---
+
 ## [2026-08-24 14:40] T9a (parcial 5/6) — Endpoint P4: validacion de identidad con tres desenlaces
 **Estado:** EN PROGRESO — bloque 5 de T9a. Falta el bloque 6 (P5, P6 y P7, subdividido
 por endpoint). Vistas de Vue van en T9b, tarea aparte.

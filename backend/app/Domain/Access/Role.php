@@ -77,6 +77,7 @@ enum Role: string
                 Permission::UpdateCreditApplicationStatus,
                 Permission::ViewIdentityDocumentImage,
                 Permission::ReadAuditLog,
+                Permission::ViewAnyCustomer,
             ],
 
             // Auditor: lectura de la bitacora y de los expedientes. Solo
@@ -85,6 +86,7 @@ enum Role: string
                 Permission::ViewAnyCreditApplication,
                 Permission::ViewIdentityDocumentImage,
                 Permission::ReadAuditLog,
+                Permission::ViewAnyCustomer,
             ],
 
             // Analista de riesgos: unico perfil administrativo con acceso a los
@@ -94,6 +96,7 @@ enum Role: string
                 Permission::ViewAnyCreditApplication,
                 Permission::ViewAnyDeclaredIncome,
                 Permission::ManageCreditRules,
+                Permission::ViewAnyCustomer,
             ],
         };
     }

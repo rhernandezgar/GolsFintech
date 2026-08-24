@@ -6,6 +6,7 @@ use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\CreditApplicationController;
 use App\Http\Controllers\Api\CreditSimulationController;
+use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\IdentityDocumentController;
 use App\Http\Controllers\Api\IdentityValidationController;
 use App\Http\Controllers\Api\MeController;
@@ -179,6 +180,14 @@ Route::middleware('auth:api')->group(function (): void {
         Route::get('/audit-logs', [AuditLogController::class, 'index'])
             ->middleware('can:'.Permission::ReadAuditLog->value)
             ->name('audit-logs.index');
+
+        // P7. Consulta administrativa del cliente. Va bajo `read-only` porque
+        // es de lectura pura; el filtro por rol es `can:customer.view.any` y
+        // el filtrado del ingreso declarado por campo se hace dentro del
+        // controlador (RS-05).
+        Route::get('/customers/{customerNumber}', [CustomerController::class, 'show'])
+            ->middleware('can:'.Permission::ViewAnyCustomer->value)
+            ->name('customers.show');
     });
 });
 
