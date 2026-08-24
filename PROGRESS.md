@@ -5,6 +5,125 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-24 12:15] T9a (parcial 4/6) — Endpoints de P2: captura parcial y confirmacion
+**Estado:** EN PROGRESO — bloque 4 de T9a. Faltan endpoints P4 (bloque 5) y P5/P6/P7
+(bloque 6, subdividido por endpoint). Vistas de Vue van en T9b, tarea aparte.
+**Commit:** ver `git log --oneline` (commit `T9a (parcial): endpoints de P2`).
+**Evidencia:** `php artisan test` -> 366 pruebas / 1012 aserciones en verde (11 nuevas);
+`./vendor/bin/pint --test` limpio; `bash scripts/verificar_avance.sh` -> **86 OK /
+6 FALTA / 2 REVISAR** (+1 OK respecto al baseline anterior, gracias a la verificacion
+complementaria del script; T9 sigue en FALTA porque su criterio son las 7 vistas de Vue).
+
+### Cierre de la regresion heredada
+
+La sesion previa dejo el arbol sin commitear con dos hallazgos:
+
+- **T6 en rojo:** `ProspectTest::test_data_cannot_be_confirmed_before_being_captured`
+  esperaba `InvalidStateTransitionException`, pero el cambio de dominio que exigia la
+  precision 2 —confirmar con lista de campos faltantes— hace que `confirmData()` lance
+  `ProspectDataIncompleteException`. La prueba se actualizo para esperar la excepcion
+  nueva y verificar `missingFields()`.
+- **T10 con "2 campo(s) exponen CURP/RFC/PAN en claro":** falso positivo del script.
+  Los dos matches estaban en `CaptureProspectDataRequest`, que son reglas de VALIDACION
+  DE ENTRADA (el cliente envia CURP y RFC con esos nombres), no proyecciones de salida.
+  Comprobado con grep que ningun controlador ni recurso devuelve CURP en claro. Con
+  autorizacion del usuario se afino el script para mirar solo `Http/Controllers` y
+  `Http/Resources`, y se anadio una verificacion complementaria que cubre el hueco
+  —accesos `->curp/->rfc/->tokenized_card_number` en esas capas sin `mask/hash/last_four`
+  en la misma linea—. Commit `chore:` aparte.
+
+Ademas se reformulo un comentario en `ProspectController` que mencionaba `getMessage()`
+literalmente y hacia subir el contador de REVISAR sin motivo real.
+
+### Que se hizo en el bloque 4
+
+**Dominio:**
+- `Prospect::mergePartialData(...)` — actualizacion parcial con todos los campos como
+  opcionales. Transiciona a `data_captured` solo si hay al menos un campo presente; un
+  PATCH con cuerpo vacio no mueve el estado.
+- `Prospect::missingConfirmationFields(): list<string>` — lista de campos obligatorios
+  que aun no estan capturados. `confirmData()` la usa para lanzar
+  `ProspectDataIncompleteException` con el detalle, en lugar del anterior
+  `InvalidStateTransitionException` con mensaje generico.
+- `Domain/Exception/ProspectDataIncompleteException` — excepcion propia con codigo estable
+  `PROSPECT_DATA_INCOMPLETE` y `missingFields()`. Separada de `InvalidStateTransition`
+  a proposito: confirmar con campos vacios es regla de negocio, no fallo de flujo.
+
+**Aplicacion:**
+- `Application/DTO/ProspectDataPatch` — DTO parcial con todos los campos nullable.
+- `Application/UseCase/Prospect/UpdateProspectDraft` — orquesta el merge parcial, valida
+  cada campo presente con su objeto de valor (CURP con digito, RFC con estructura,
+  telefono con formato, correo strict) y comprueba unicidad de CURP contra otros
+  expedientes. Emite `prospect.data_captured` con `updated_fields`. `CaptureProspectData`
+  se mantiene intacto: es el flujo OCR "todo de una vez".
+
+**HTTP:**
+- `CaptureProspectDataRequest` — todos los campos como `sometimes|nullable`. La
+  validacion estricta aplica solo a los presentes.
+- `ConfirmProspectDataRequest` — cuerpo vacio; la comprobacion de completitud vive en
+  el dominio y el controlador la traduce a 422 con `missing_fields`.
+- `ProspectController::update` y `::confirm` — cargan el expediente desde el token
+  (`$request->user()->prospect`), aplican `Gate::authorize('updateOwn', $prospect)`
+  como defensa en profundidad, y mapean `DomainException` a 422 con `error_code` estable.
+- Rutas nuevas: `PATCH /api/v1/prospects/me` (`prospects.me.update`) y
+  `POST /api/v1/prospects/me/confirm` (`prospects.me.confirm`), dentro del grupo
+  `scopes:prospect-session`.
+
+**Autorizacion:**
+- `Policies/ProspectPolicy::updateOwn(User, ProspectRecord)` — verifica permiso
+  `CaptureOwnProspectData` y titularidad (`user->prospect_id === prospect->id`). Con la
+  ruta actual, el prospecto sale del token y no hay identificador ajeno que nombrar; la
+  politica es defensa en profundidad para el dia que aparezca una ruta con `{prospect}`.
+- Registrada en `AuthorizationServiceProvider` con `Gate::policy(ProspectRecord::class,
+  ProspectPolicy::class)`.
+
+**Pruebas:**
+- `Tests\Feature\Prospect\ProspectDataCaptureTest` — 11 pruebas nuevas: 401 sin token
+  (PATCH y POST), 422 por FormRequest (CURP con longitud incorrecta), 422 por dominio
+  (CURP con digito equivocado, `error_code: INVALID_CURP`), 422 en confirm sin datos y
+  con datos parciales (con `missing_fields` verificado), 200 en captura parcial y en
+  flujo completo, aislamiento por token (dos prospectos, cada PATCH toca su fila y no
+  la del otro), 403 sobre expediente ajeno (comprobacion directa de la politica), y
+  aserto de que la respuesta del PATCH no devuelve CURP en claro (RS-03 en verificacion).
+- `ApiAccessControlTest::without_a_token_every_endpoint_answers_401` amplia para incluir
+  las dos rutas nuevas de P2.
+
+### Una decision que conviene tener a la vista
+
+**El guard de Passport se cachea entre peticiones en tests.** En la misma prueba, emitir
+dos tokens (dos prospectos distintos) y ejercer el segundo tras haber ejercido el primero
+hace que el guard devuelva al primer usuario, y el aislamiento por token se evapora **solo
+en tests**. En produccion no existe: cada peticion abre un ciclo del kernel nuevo. La
+solucion es `$this->app['auth']->forgetGuards()` antes de cada peticion autenticada. Se
+introdujo el helper `resetGuard()` en `ProspectDataCaptureTest` con el comentario que
+explica el porque; cualquier prueba futura que ejerza dos tokens distintos en la misma
+peticion debe reproducirlo o el falso verde volvera.
+
+### CLAUDE.md — seccion 7.1 nueva
+
+Se anadio la regla de **cierre defensivo cuando la sesion se esta agotando**: nunca se
+cierra sesion con la suite en rojo, con `pint` sucio o con un control de seguridad en
+regresion respecto al commit anterior. Antes de cerrar, commit parcial de lo que
+compile; si no compila, revertir hasta un estado verde. La regla salio del incidente
+del 2026-08-24 —cuarta interrupcion por limite—, primera en dejar el proyecto peor de
+lo que estaba, y esta escrita en la seccion 7.1 justo despues de la regla de continuidad
+porque es de la misma familia.
+
+**Siguiente paso pendiente:** T9a (parcial 5/6) — endpoint P4 (validacion de identidad).
+
+1. `Http/Controllers/Api/IdentityValidationController::store` que invoca el use case
+   `ValidateIdentity` (bloque 3) con el prospecto del token y opcionalmente el
+   `identity_document_id` de un documento previamente cargado.
+2. `Http/Requests/Identity/ValidateIdentityRequest`: `document_public_id` opcional,
+   UUID formato.
+3. Extender la lista cerrada de `ApiAccessControlTest` si hace falta.
+4. Ruta `POST /api/v1/identity-validations` bajo `scopes:prospect-session`.
+5. Pruebas: 401 sin token, 403 con documento ajeno, 200 con validacion verificada y
+   con validacion rechazada. Ejercicio de la asimetria de eventos (`_requested` primero,
+   despues `_succeeded` o `_rejected`).
+
+---
+
 ## [2026-08-23 11:30] T9a (parcial 3.5/6) — Persistencia de la simulacion antes de arrancar P2
 **Estado:** EN PROGRESO — pieza puente entre el bloque 3 y el 4 de T9a, encargada
 por el usuario para no dejar un eslabon abierto entre P5 y P6.

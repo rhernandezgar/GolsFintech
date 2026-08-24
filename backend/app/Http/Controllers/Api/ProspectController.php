@@ -4,23 +4,33 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Application\DTO\ProspectDataPatch;
+use App\Application\UseCase\Prospect\ConfirmProspectData;
 use App\Application\UseCase\Prospect\StartProspectCapture;
+use App\Application\UseCase\Prospect\UpdateProspectDraft;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
+use App\Domain\Exception\DomainException;
+use App\Domain\Exception\ProspectDataIncompleteException;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Prospect\CaptureMethod;
+use App\Domain\Shared\Uuid;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Prospect\CaptureProspectDataRequest;
+use App\Http\Requests\Prospect\ConfirmProspectDataRequest;
 use App\Http\Requests\Prospect\StartProspectCaptureRequest;
+use App\Infrastructure\Persistence\Eloquent\ProspectRecord;
 use App\Infrastructure\Security\CaptchaVerifier;
 use App\Infrastructure\Security\ProspectSessionIssuer;
 use DateTimeImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * P1: inicio de la solicitud y sesion del prospecto.
+ * P1 (nace la sesion), P2 (captura y confirmacion de datos) y sesion.
  *
  * `store()` es el UNICO endpoint del recorrido del prospecto sin autenticar, y
  * lo es por necesidad: es donde nace la credencial. Su justificacion completa
@@ -31,11 +41,19 @@ use Symfony\Component\HttpFoundation\Response;
  * limitacion de peticiones por IP y CAPTCHA. Son complementarios, no
  * redundantes: el throttle cuenta por direccion, y repartir el trabajo entre
  * muchas direcciones lo esquiva sin esfuerzo (RS-10, riesgo R-05).
+ *
+ * `update()` y `confirm()` sirven P2. El expediente sale del token, no de la
+ * URL: no hay forma de nombrar el expediente de otro (CWE-639 cerrado por
+ * diseno de rutas). Aun asi cada uno aplica `ProspectPolicy::updateOwn` como
+ * defensa en profundidad: si manana apareciera una ruta con `{prospect}` la
+ * comprobacion de titularidad quedaria en el mismo lugar.
  */
 final class ProspectController extends Controller
 {
     public function __construct(
         private readonly StartProspectCapture $startProspectCapture,
+        private readonly UpdateProspectDraft $updateProspectDraft,
+        private readonly ConfirmProspectData $confirmProspectData,
         private readonly ProspectSessionIssuer $sessions,
         private readonly CaptchaVerifier $captcha,
         private readonly AuditLogger $auditLogger,
@@ -104,6 +122,83 @@ final class ProspectController extends Controller
     }
 
     /**
+     * P2 (PATCH): actualizacion parcial. Acepta cualquier subconjunto de
+     * campos del formulario; la comprobacion de expediente completo la hace
+     * `confirm()`, no este endpoint.
+     */
+    public function update(CaptureProspectDataRequest $request): JsonResponse
+    {
+        $prospect = $this->ownProspectOrFail($request);
+
+        try {
+            $updated = $this->updateProspectDraft->execute(
+                Uuid::fromString($prospect->public_id),
+                new ProspectDataPatch(
+                    fullName: $request->input('full_name'),
+                    curp: $request->input('curp'),
+                    rfc: $request->input('rfc'),
+                    age: $request->has('age') ? (int) $request->input('age') : null,
+                    sex: $request->input('sex'),
+                    monthlyIncome: $request->input('monthly_income'),
+                    address: $request->input('address'),
+                    geographicLocation: $request->input('geographic_location'),
+                    businessType: $request->input('business_type'),
+                    email: $request->input('email'),
+                    phone: $request->input('phone'),
+                ),
+                new AuditContext(actor: 'prospect:'.$prospect->public_id, ipAddress: $request->ip()),
+                new DateTimeImmutable,
+            );
+        } catch (DomainException $e) {
+            // Cualquier fallo del dominio —CURP con digito equivocado, CURP
+            // duplicada, RFC invalido, telefono mal formado— se traduce a 422
+            // con el codigo estable de la excepcion. El detalle tecnico queda
+            // en el mensaje interno de la excepcion, para el registro del
+            // servidor, y no viaja al cliente (regla de seguridad 8, VUL-05).
+            return new JsonResponse([
+                'message' => $e->userMessage(),
+                'error_code' => $e->errorCode(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return new JsonResponse(['data' => [
+            'tracking_id' => $updated->publicId()->value,
+            'capture_status' => $updated->captureStatus()->value,
+            // Sin datos personales: el cliente ya sabe lo que envio; devolver
+            // el CURP aunque sea propio agranda la superficie sin necesidad.
+            'has_data' => $updated->fullName() !== null,
+        ]]);
+    }
+
+    /**
+     * P2 (paso 2): confirmacion. Exige el expediente completo. Si faltan
+     * campos obligatorios, responde 422 indicando cuales.
+     */
+    public function confirm(ConfirmProspectDataRequest $request): JsonResponse
+    {
+        $prospect = $this->ownProspectOrFail($request);
+
+        try {
+            $confirmed = $this->confirmProspectData->execute(
+                Uuid::fromString($prospect->public_id),
+                new AuditContext(actor: 'prospect:'.$prospect->public_id, ipAddress: $request->ip()),
+                new DateTimeImmutable,
+            );
+        } catch (ProspectDataIncompleteException $e) {
+            return new JsonResponse([
+                'message' => $e->userMessage(),
+                'error_code' => $e->errorCode(),
+                'missing_fields' => $e->missingFields(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return new JsonResponse(['data' => [
+            'tracking_id' => $confirmed->publicId()->value,
+            'capture_status' => $confirmed->captureStatus()->value,
+        ]]);
+    }
+
+    /**
      * Renovacion silenciosa mientras haya actividad.
      *
      * Emite un token nuevo y no revoca el anterior: P3 consulta el estado del
@@ -116,5 +211,24 @@ final class ProspectController extends Controller
         return new JsonResponse(['data' => [
             'session' => $this->sessions->renew($request->user())->toArray(),
         ]]);
+    }
+
+    /**
+     * Resuelve el expediente desde el token y aplica la politica. La ruta ya
+     * exige `scopes:prospect-session`, asi que si llegamos aqui sin prospecto
+     * asignado es un usuario mal formado —el flujo de P1 siempre asigna uno—.
+     */
+    private function ownProspectOrFail(Request $request): ProspectRecord
+    {
+        $prospect = $request->user()->prospect;
+
+        if (! $prospect instanceof ProspectRecord) {
+            // Mensaje generico; el detalle queda en el registro del servidor.
+            abort(Response::HTTP_FORBIDDEN, 'No tiene acceso a este recurso.');
+        }
+
+        Gate::authorize('updateOwn', $prospect);
+
+        return $prospect;
     }
 }

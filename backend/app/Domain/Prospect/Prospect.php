@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Prospect;
 
 use App\Domain\Exception\InvalidStateTransitionException;
+use App\Domain\Exception\ProspectDataIncompleteException;
 use App\Domain\Identity\Curp;
 use App\Domain\Identity\Rfc;
 use App\Domain\Shared\Email;
@@ -135,6 +136,113 @@ final class Prospect
         $this->phone = $phone;
     }
 
+    /**
+     * Actualiza los campos que llegan y deja intactos los que no. Se usa desde
+     * PATCH /prospects/me, donde el prospecto llena el formulario por pasos y
+     * no siempre envia todos los campos. La validacion estricta la hace el
+     * objeto de valor de cada dato en la capa de aplicacion —CURP con digito,
+     * RFC con estructura, telefono con formato—; aqui solo se asignan.
+     *
+     * Transiciona a `data_captured` en la primera llamada si el prospecto
+     * seguia en `started`. En llamadas posteriores se mantiene: `data_captured`
+     * -> `data_captured` es una transicion explicita en TRANSITIONS, justo
+     * para permitir la correccion antes de confirmar.
+     */
+    public function mergePartialData(
+        ?string $fullName = null,
+        ?Curp $curp = null,
+        ?Rfc $rfc = null,
+        ?int $age = null,
+        ?Sex $sex = null,
+        ?Money $monthlyIncome = null,
+        ?string $address = null,
+        ?string $geographicLocation = null,
+        ?string $businessType = null,
+        ?Email $email = null,
+        ?PhoneNumber $phone = null,
+    ): void {
+        // Nada que aplicar: se evita la transicion de estado. Un PATCH con
+        // cuerpo vacio no debe mover el estado del expediente.
+        if ($fullName === null && $curp === null && $rfc === null && $age === null
+            && $sex === null && $monthlyIncome === null && $address === null
+            && $geographicLocation === null && $businessType === null
+            && $email === null && $phone === null
+        ) {
+            return;
+        }
+
+        if ($this->captureStatus === CaptureStatus::Started
+            || $this->captureStatus === CaptureStatus::DataCaptured
+            || $this->captureStatus === CaptureStatus::DocumentUploaded
+        ) {
+            $this->transitionTo(CaptureStatus::DataCaptured);
+        }
+
+        if ($fullName !== null) {
+            $this->fullName = trim($fullName);
+        }
+        if ($curp !== null) {
+            $this->curp = $curp;
+        }
+        if ($rfc !== null) {
+            $this->rfc = $rfc;
+        }
+        if ($age !== null) {
+            $this->age = $age;
+        }
+        if ($sex !== null) {
+            $this->sex = $sex;
+        }
+        if ($monthlyIncome !== null) {
+            $this->monthlyIncome = $monthlyIncome;
+        }
+        if ($address !== null) {
+            $this->address = $address;
+        }
+        if ($geographicLocation !== null) {
+            $this->geographicLocation = $geographicLocation;
+        }
+        if ($businessType !== null) {
+            $this->businessType = $businessType;
+        }
+        if ($email !== null) {
+            $this->email = $email;
+        }
+        if ($phone !== null) {
+            $this->phone = $phone;
+        }
+    }
+
+    /**
+     * Lista de campos obligatorios que aun no estan capturados. Es lo que P6
+     * necesita para responder 422 en `confirm` indicando exactamente que le
+     * falta al prospecto, sin filtrar detalle tecnico del dominio.
+     *
+     * @return list<string>
+     */
+    public function missingConfirmationFields(): array
+    {
+        $missing = [];
+
+        if ($this->fullName === null) {
+            $missing[] = 'full_name';
+        }
+        if ($this->curp === null) {
+            $missing[] = 'curp';
+        }
+        if ($this->age === null) {
+            $missing[] = 'age';
+        }
+        if ($this->sex === null) {
+            $missing[] = 'sex';
+        }
+        if ($this->monthlyIncome === null) {
+            $missing[] = 'monthly_income';
+        }
+
+        return $missing;
+    }
+
     public function markDocumentUploaded(): void
     {
         $this->transitionTo(CaptureStatus::DocumentUploaded);
@@ -143,8 +251,14 @@ final class Prospect
     /** El prospecto revisa lo capturado o extraido y lo da por bueno (P2/P4). */
     public function confirmData(): void
     {
-        if ($this->curp === null || $this->monthlyIncome === null || $this->fullName === null) {
-            throw new InvalidStateTransitionException('Faltan datos obligatorios para confirmar la captura.');
+        $missing = $this->missingConfirmationFields();
+
+        if ($missing !== []) {
+            // Excepcion propia con la lista de faltantes: el endpoint la
+            // convierte en un 422 que indica cuales, sin filtrar detalle
+            // tecnico. Antes se lanzaba `InvalidStateTransitionException` con
+            // un mensaje generico y el cliente no sabia que le pedian.
+            throw new ProspectDataIncompleteException($missing);
         }
 
         $this->transitionTo(CaptureStatus::DataConfirmed);

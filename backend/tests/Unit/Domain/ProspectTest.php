@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Domain;
 
 use App\Domain\Exception\InvalidStateTransitionException;
+use App\Domain\Exception\ProspectDataIncompleteException;
 use App\Domain\Identity\Curp;
 use App\Domain\Prospect\CaptureMethod;
 use App\Domain\Prospect\CaptureStatus;
@@ -58,9 +59,17 @@ final class ProspectTest extends TestCase
 
     public function test_data_cannot_be_confirmed_before_being_captured(): void
     {
-        $this->expectException(InvalidStateTransitionException::class);
-
-        $this->startedProspect()->confirmData();
+        try {
+            $this->startedProspect()->confirmData();
+            $this->fail('Se esperaba ProspectDataIncompleteException al confirmar sin datos.');
+        } catch (ProspectDataIncompleteException $e) {
+            // La excepcion propia trae la lista de campos faltantes: es lo
+            // que el endpoint de P6 usa para responder 422 diciendo cuales.
+            $this->assertEqualsCanonicalizing(
+                ['full_name', 'curp', 'age', 'sex', 'monthly_income'],
+                $e->missingFields(),
+            );
+        }
     }
 
     public function test_a_confirmed_prospect_cannot_go_back_to_capture(): void

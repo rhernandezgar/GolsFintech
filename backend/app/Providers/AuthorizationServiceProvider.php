@@ -6,6 +6,7 @@ namespace App\Providers;
 
 use App\Domain\Access\Permission;
 use App\Infrastructure\Persistence\Eloquent\CreditApplicationRecord;
+use App\Infrastructure\Persistence\Eloquent\ProspectRecord;
 use App\Infrastructure\Security\CaptchaVerifier;
 use App\Infrastructure\Security\FirstPartyClient;
 use App\Infrastructure\Security\ProspectSessionIssuer;
@@ -14,6 +15,7 @@ use App\Infrastructure\Security\TotpAuthenticator;
 use App\Infrastructure\Security\TurnstileCaptchaVerifier;
 use App\Models\User;
 use App\Policies\CreditApplicationPolicy;
+use App\Policies\ProspectPolicy;
 use DateInterval;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
@@ -105,6 +107,7 @@ final class AuthorizationServiceProvider extends ServiceProvider
         $this->registerPermissionGates();
 
         Gate::policy(CreditApplicationRecord::class, CreditApplicationPolicy::class);
+        Gate::policy(ProspectRecord::class, ProspectPolicy::class);
 
         $this->configureOAuthServer();
     }

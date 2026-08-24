@@ -72,6 +72,10 @@ final class ApiAccessControlTest extends TestCase
             'application_status' => 'approved',
         ])->assertStatus(401);
         $this->deleteJson('/api/v1/auth/session')->assertStatus(401);
+        // P2. La captura y la confirmacion son autenticadas: el prospecto
+        // sale del token, no de la URL, y sin token no hay expediente.
+        $this->patchJson('/api/v1/prospects/me', ['full_name' => 'Ana Perez Lopez'])->assertStatus(401);
+        $this->postJson('/api/v1/prospects/me/confirm')->assertStatus(401);
     }
 
     #[Test]

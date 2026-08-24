@@ -109,6 +109,18 @@ Route::middleware('auth:api')->group(function (): void {
         ->group(function (): void {
             Route::get('/', [ProspectController::class, 'show'])->name('prospects.me.show');
 
+            // P2. Captura parcial: el prospecto llena el formulario por pasos
+            // y no siempre envia todos los campos. La comprobacion de
+            // expediente completo es cosa de `confirm`, no de este endpoint.
+            Route::patch('/', [ProspectController::class, 'update'])
+                ->name('prospects.me.update');
+
+            // P2 (paso 2). Confirmacion: exige el expediente completo.
+            // Responde 422 con `missing_fields` si algo falta. Es la
+            // transicion que habilita P4.
+            Route::post('/confirm', [ProspectController::class, 'confirm'])
+                ->name('prospects.me.confirm');
+
             // Renovacion silenciosa mientras haya actividad.
             Route::post('/session', [ProspectController::class, 'renewSession'])
                 ->middleware('throttle:20,1')

@@ -331,6 +331,31 @@ Además:
   introduzca y corrija el propio asistente; los controles preventivos del diseño van en
   `SECURITY_CHECKLIST.md`. El criterio de cada archivo esta en la seccion 6.2.
 
+### 7.1 Cierre defensivo cuando la sesión se está agotando
+
+Si el margen de sesión se acaba a mitad de un bloque, **el asistente no cierra dejando el
+proyecto peor de lo que estaba**. Nunca se termina con la suite en rojo, con `pint` sucio ni
+con un control de seguridad en regresión respecto al commit anterior. Antes de cerrar:
+
+1. Se commitea lo que compile con el prefijo del bloque en curso y la etiqueta `(parcial)`,
+   igual que se hizo en T7 y en los tres commits de T9a. Un commit parcial con un mensaje
+   explicando lo que quedó a medias vale más que un árbol de trabajo perdido.
+2. Si lo escrito no compila o la suite no está verde, **se revierte lo último** hasta
+   volver a un estado verde y se commitea desde ahí. Es mejor perder el intento y
+   documentar qué se probó, que dejar el árbol contaminado.
+3. Si un control del script de auditoría (`bash scripts/verificar_avance.sh`) pasó de OK
+   a FALTA por el trabajo del asistente, **eso es una regresión y no un pendiente**: se
+   arregla o se revierte antes de cerrar. No se cierra sesión con una regresión de
+   seguridad viva, aunque la suite de pruebas esté verde.
+4. Se anota en `PROGRESS.md` el punto exacto: archivo, clase, método y qué falta, sin
+   depender del contexto de la conversación.
+
+Este criterio salió del incidente del 2026-08-24, cuarta interrupción por límite de
+sesión, que fue la primera en dejar el proyecto peor de lo que estaba (T6 pasó de OK a
+FALTA por una prueba desactualizada, y T10 perdió un control por un falso positivo del
+script sin avisar). Es la clase de cosa que una sola vez basta para romper la confianza
+en los commits parciales, y por eso se documenta.
+
 ## 8. Qué no hacer
 
 - No introducir microservicios, colas adicionales ni librerías pesadas fuera del diseño.
