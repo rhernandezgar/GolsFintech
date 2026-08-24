@@ -76,6 +76,9 @@ final class ApiAccessControlTest extends TestCase
         // sale del token, no de la URL, y sin token no hay expediente.
         $this->patchJson('/api/v1/prospects/me', ['full_name' => 'Ana Perez Lopez'])->assertStatus(401);
         $this->postJson('/api/v1/prospects/me/confirm')->assertStatus(401);
+        // P4. La validacion de identidad tambien lo es: consulta a INE y
+        // RENAPO sobre datos personales, y sin token no hay expediente.
+        $this->postJson('/api/v1/identity-validations')->assertStatus(401);
     }
 
     #[Test]

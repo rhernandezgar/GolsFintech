@@ -6,6 +6,7 @@ use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\CreditApplicationController;
 use App\Http\Controllers\Api\IdentityDocumentController;
+use App\Http\Controllers\Api\IdentityValidationController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Api\ProspectController;
 use App\Http\Controllers\Auth\LoginController;
@@ -126,6 +127,15 @@ Route::middleware('auth:api')->group(function (): void {
                 ->middleware('throttle:20,1')
                 ->name('prospects.me.session.renew');
         });
+
+    // P4. Validacion de identidad. El prospecto sale del token; el unico dato
+    // aceptado en el cuerpo es el `document_public_id` opcional. Al cliente
+    // NO se le dice que fallo cuando el resultado no es "verificado" —solo el
+    // folio de seguimiento— para no darle pistas a un intento de suplantacion
+    // (R-01). El detalle si viaja a la bitacora.
+    Route::middleware('scopes:'.ProspectSessionIssuer::PROSPECT_SCOPE)
+        ->post('/identity-validations', [IdentityValidationController::class, 'store'])
+        ->name('identity-validations.store');
 
     // Recursos de negocio. read-only se aplica al grupo entero y no ruta por
     // ruta: que un rol de solo lectura no escriba es una propiedad del rol, y

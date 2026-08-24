@@ -36,6 +36,10 @@ enum AuditEventType: string
     case IdentityValidationRequested = 'identity.validation_requested';
     case IdentityValidationSucceeded = 'identity.validation_succeeded';
     case IdentityValidationRejected = 'identity.validation_rejected';
+    // El proveedor no respondio "verificado" ni "no verificado" —esta caido o
+    // devuelve "en proceso"—. Distinto de rejected: rechazar por caida del
+    // proveedor negaria credito a alguien con identidad valida (riesgo R-03).
+    case IdentityValidationDeferred = 'identity.validation_deferred';
     case CreditApplicationOpened = 'credit_application.opened';
     case CreditApplicationApproved = 'credit_application.approved';
     case CreditSimulationGenerated = 'credit_simulation.generated';

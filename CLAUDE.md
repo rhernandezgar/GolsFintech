@@ -356,6 +356,30 @@ FALTA por una prueba desactualizada, y T10 perdió un control por un falso posit
 script sin avisar). Es la clase de cosa que una sola vez basta para romper la confianza
 en los commits parciales, y por eso se documenta.
 
+### 7.2 Reglas de pruebas — aislamiento por token en tests
+
+En tests, el contenedor se reutiliza entre peticiones y el guard de Passport cachea el
+`user()` resuelto. Si en la misma prueba se emiten dos tokens distintos y se ejerce el
+segundo tras el primero, el guard devuelve al usuario del primero y el aislamiento por
+token **se evapora solo en tests** (en producción no ocurre: cada request abre un ciclo
+del kernel nuevo). Es el modo de fallo peligroso: la prueba no falla, solo deja de
+comprobar lo que dice comprobar.
+
+Por eso `Tests\TestCase` sobrescribe `withHeader('Authorization', ...)` y `withHeaders`
+para llamar `$this->app['auth']->forgetGuards()` antes de establecer la cabecera.
+`Passport::actingAs` **no** pasa por esa vía —establece el user directamente en el guard—
+y sigue funcionando como siempre. Cualquier prueba que ejerza dos tokens en la misma
+prueba queda cubierta por infraestructura, sin recordar nada.
+
+Reglas derivadas:
+
+- Para autenticación por bearer explícito, usar `->withHeader('Authorization', 'Bearer '
+  . $token)` o `->withToken($token)`. Ambos disparan el reset automático.
+- Para autenticación programática dentro del test, `Passport::actingAs($user, $scopes)`.
+- No introducir formas alternativas de fijar `Authorization` (`$_SERVER`, headers vía
+  reflection) sin replicar el reset. El aislamiento entre pruebas depende de que el
+  guard no sobreviva a la petición anterior.
+
 ## 8. Qué no hacer
 
 - No introducir microservicios, colas adicionales ni librerías pesadas fuera del diseño.

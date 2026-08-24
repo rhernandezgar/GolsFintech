@@ -7,6 +7,8 @@ namespace Tests\Unit\Application;
 use App\Application\UseCase\Identity\ValidateIdentity;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEventType;
+use App\Domain\Exception\DocumentNotOwnedByProspectException;
+use App\Domain\Exception\ProspectDataNotConfirmedException;
 use App\Domain\Identity\Curp;
 use App\Domain\Identity\DocumentType;
 use App\Domain\Identity\IdentityDocument;
@@ -69,7 +71,7 @@ final class ValidateIdentityTest extends TestCase
         return new AuditContext('user:test', '198.51.100.7');
     }
 
-    private function storedProspect(): Prospect
+    private function storedProspect(bool $confirmed = true): Prospect
     {
         $prospect = Prospect::start(CaptureMethod::Manual, new DateTimeImmutable('2026-08-22 12:00:00'));
         $prospect->captureData(
@@ -80,6 +82,11 @@ final class ValidateIdentityTest extends TestCase
             sex: Sex::Female,
             monthlyIncome: Money::fromDecimalString('18000.00'),
         );
+        // P4 exige el expediente confirmado (Fase 1). Las pruebas que no
+        // quieren esa precondicion pasan `confirmed: false` para simularla.
+        if ($confirmed) {
+            $prospect->confirmData();
+        }
 
         return $this->prospects->save($prospect);
     }
@@ -190,6 +197,55 @@ final class ValidateIdentityTest extends TestCase
         $this->assertSame(0, $this->validations->count());
     }
 
+    public function test_an_unavailable_provider_produces_deferred_not_rejected(): void
+    {
+        // Riesgo R-03: si el proveedor no responde "verificado" ni "no
+        // verificado", colapsarlo a rejected negaria credito a alguien con
+        // identidad valida. Va como deferred y la fila queda persistida
+        // para reintento.
+        $prospect = $this->storedProspect();
+        $this->validator->willBeUnavailable();
+
+        $recorded = $this->useCase()->execute(
+            $prospect->publicId(),
+            documentPublicId: null,
+            context: $this->context(),
+            now: new DateTimeImmutable('2026-08-22 12:00:00'),
+        );
+
+        $this->assertFalse($recorded->result->isVerified());
+        $this->assertSame(1, $this->validations->count());
+        $this->assertSame(
+            [AuditEventType::IdentityValidationRequested->value, AuditEventType::IdentityValidationDeferred->value],
+            $this->audit->eventTypes(),
+        );
+    }
+
+    public function test_validating_without_confirmed_data_is_refused_and_emits_no_events(): void
+    {
+        // P4 va despues de la confirmacion de P2 (Fase 1). Un prospecto sin
+        // `data_confirmed` no puede validarse: consultar a INE y RENAPO con
+        // datos incompletos cobraria la llamada y no serviria para nada.
+        $prospect = $this->storedProspect(confirmed: false);
+
+        try {
+            $this->useCase()->execute(
+                $prospect->publicId(),
+                documentPublicId: null,
+                context: $this->context(),
+                now: new DateTimeImmutable('2026-08-22 12:00:00'),
+            );
+            $this->fail('Se esperaba ProspectDataNotConfirmedException.');
+        } catch (ProspectDataNotConfirmedException) {
+            // Bien: la excepcion se propaga.
+        }
+
+        // Y ni siquiera se emite `_requested`: el proveedor no se llamo,
+        // asi que no hay intento que registrar.
+        $this->assertSame([], $this->audit->eventTypes());
+        $this->assertSame(0, $this->validations->count());
+    }
+
     public function test_a_document_that_does_not_belong_to_the_prospect_is_refused(): void
     {
         $prospect = $this->storedProspect();
@@ -198,7 +254,10 @@ final class ValidateIdentityTest extends TestCase
         // expediente (CWE-639).
         $strangerDocumentId = Uuid::generate();
 
-        $this->expectException(RuntimeException::class);
+        // Excepcion de dominio propia (no RuntimeException) para que la capa
+        // HTTP la traduzca a 403 con mensaje generico -distinta de "no
+        // existe"-.
+        $this->expectException(DocumentNotOwnedByProspectException::class);
         $this->useCase()->execute(
             $prospect->publicId(),
             documentPublicId: $strangerDocumentId,

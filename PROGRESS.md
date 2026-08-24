@@ -5,6 +5,120 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-24 14:40] T9a (parcial 5/6) — Endpoint P4: validacion de identidad con tres desenlaces
+**Estado:** EN PROGRESO — bloque 5 de T9a. Falta el bloque 6 (P5, P6 y P7, subdividido
+por endpoint). Vistas de Vue van en T9b, tarea aparte.
+**Commit:** ver `git log --oneline` (commit `T9a (parcial): endpoint P4...`).
+**Evidencia:** `php artisan test` -> 377 pruebas / 1053 aserciones en verde (11 nuevas
+—9 feature + 2 unit—); `./vendor/bin/pint --test` limpio;
+`bash scripts/verificar_avance.sh` -> **86 OK / 6 FALTA / 2 REVISAR** (identico al
+bloque 4; T9 sigue en FALTA porque su criterio son las 7 vistas de Vue).
+
+### Precondicion arreglada antes de arrancar: `resetGuard()` sube al TestCase base
+
+La prueba de aislamiento por token en el bloque 4 dependia de que cada prueba futura
+recordara llamar `resetGuard()`. Ese es exactamente el modo de fallo peligroso: una
+prueba que lo olvida no falla, solo pasa en falso. Se subio al TestCase base:
+`Tests\TestCase` sobrescribe `withHeader('Authorization', ...)` y `withHeaders` para
+llamar `$this->app['auth']->forgetGuards()` antes de establecer la cabecera. El primer
+intento —sobrescribir `call()`— rompio 32 pruebas porque descartaba tambien al usuario
+establecido por `Passport::actingAs()`; el patron quirurgico —solo en `withHeader`—
+mantiene ambas formas de autenticacion sanas. La regla queda en CLAUDE.md 7.2.
+
+### Que se hizo en el bloque 5
+
+**Dominio:**
+- `Domain/Exception/ProspectDataNotConfirmedException` — codigo `PROSPECT_DATA_NOT_CONFIRMED`,
+  se lanza cuando P4 se llama sobre un prospecto que aun no ha confirmado sus datos.
+  Precondicion de flujo de la Fase 1 (P4 despues de P2).
+- `Domain/Exception/DocumentNotOwnedByProspectException` — codigo `DOCUMENT_NOT_OWNED`,
+  para cortar CWE-639 sobre `document_public_id` de otro expediente. La capa HTTP la
+  traduce a 403 con el mismo mensaje generico de las politicas.
+- `AuditEventType::IdentityValidationDeferred = 'identity.validation_deferred'` — evento
+  nuevo. Distinto de `_rejected`: cuando el proveedor devuelve "en proceso" o "no
+  disponible", colapsarlo a rejected negaria credito a alguien con identidad valida
+  (R-03). La fila queda persistida para reintento.
+
+**Aplicacion:**
+- `ValidateIdentity` reescrito. Ahora:
+  - Comprueba `hasConfirmedData()` y lanza `ProspectDataNotConfirmedException`.
+  - Lanza `DocumentNotOwnedByProspectException` en vez de `RuntimeException` cuando el
+    documento pertenece a otro expediente.
+  - Distingue TRES desenlaces con `match($result->overallStatus())`: verified ->
+    `_succeeded`, rejected -> `_rejected`, pending -> `_deferred`. Antes colapsaba
+    pending y rejected en `_rejected`.
+  - El evento `_requested` sigue emitiendose ANTES de llamar al proveedor: si la
+    llamada revienta, queda constancia de que se intento (R-01).
+
+**HTTP:**
+- `Http/Requests/Identity/ValidateIdentityRequest` — solo acepta `document_public_id`
+  opcional (UUID). El prospecto sale del token, siempre.
+- `Http/Controllers/Api/IdentityValidationController::store` — carga el prospecto del
+  token; mapea `DocumentNotOwnedByProspectException -> 403`,
+  `ProspectDataNotConfirmedException -> 422`, `ExternalServiceUnavailableException -> 503`;
+  proyecta la respuesta con `status` agregado (`verified` | `not_verified` | `pending`)
+  y `verification_folio`.
+- Ruta nueva: `POST /api/v1/identity-validations` bajo `scopes:prospect-session`.
+- `ApiAccessControlTest::without_a_token_every_endpoint_answers_401` amplia con el 401
+  del nuevo endpoint.
+
+### La precision de negocio 2 (R-01) traducida al controlador
+
+La respuesta HTTP **nunca** revela cual de los cuatro checks fallo. Verified, rejected y
+pending llevan cada uno solo `status`, `verification_folio` y `message` generico. Nada
+de `ine_status`, `renapo_status`, `data_match_status`, `document_validity_status` ni
+`fraud_flagged` en el cuerpo. La pantalla P4 del prototipo solo muestra el detalle
+cuando la verificacion es satisfactoria. El detalle SI viaja a la bitacora (`metadata`
+del evento `_rejected` o `_deferred`), para que soporte pueda reconstruirlo con el
+folio. La prueba `a_rejected_identity_does_not_reveal_which_check_failed` recorre el
+cuerpo palabra por palabra buscando "INE", "RENAPO", "ine_status" y similares, y falla
+si aparecen.
+
+### Pruebas anadidas
+
+**Unit (2 nuevas en `ValidateIdentityTest`, mas 3 actualizadas):**
+- `an_unavailable_provider_produces_deferred_not_rejected` — R-03 al nivel del use case.
+- `validating_without_confirmed_data_is_refused_and_emits_no_events` — la precondicion
+  se comprueba ANTES de emitir `_requested`, para que el rastro no se contamine con
+  intentos sobre datos incompletos.
+
+**Feature (9 nuevas en `IdentityValidationTest`):**
+- 401 sin token.
+- 200 verified con folio.
+- 200 not_verified sin nombrar checks (R-01).
+- 200 pending para proveedor indisponible (R-03).
+- 422 sin datos confirmados.
+- 403 con documento ajeno, con el mismo mensaje generico de las politicas.
+- Asimetria de eventos: `_requested` primero, `_succeeded` (o `_deferred`) despues.
+- Precondicion fallida: `_requested` NO aparece porque el proveedor no se llamo.
+
+### CLAUDE.md 7.2 nueva
+
+Se anadio la seccion **7.2 Reglas de pruebas — aislamiento por token en tests**: explica
+el override de `withHeader`/`withHeaders` en el TestCase base y las tres formas de
+autenticar (bearer explicito, `Passport::actingAs`, no fabricar terceras vias). Junto a
+la 7.1 forma el bloque de "reglas de continuidad y de pruebas".
+
+**Siguiente paso pendiente:** T9a (parcial 6/6) — endpoints P5, P6 y P7, uno por
+commit.
+
+1. **P5 (subbloque 6a):** `POST /api/v1/credit-simulations` que invoca `SimulateCredit`
+   con `term_months` en el cuerpo. Devuelve `CreditOfferOutput::toArray()` con
+   `simulation_public_id`, `expires_at` y demas. Pruebas: 401, 422 con plazo fuera del
+   catalogo, 422 sin identidad verificada previa, 200 con oferta y folio.
+2. **P6 (subbloque 6b):** `POST /api/v1/credit-simulations/{uuid}/accept` que invoca
+   `AcceptCreditOffer`. Pruebas: 401, 403 con simulacion ajena (CWE-639 en integracion),
+   422 con simulacion caducada (`CREDIT_SIMULATION_EXPIRED`), 200 con cliente y linea
+   y tarjeta, 200 con tarjeta pendiente si el emisor cae.
+3. **P7 (subbloque 6c):** `GET /api/v1/customers/{customer_number}` que invoca
+   `LookupCustomer`. Pruebas: 401, 403 con numero ajeno, 200 con la vista de P7,
+   auditoria del acceso (RS-06.a).
+
+Ninguno de los tres es largo por si mismo. Si el margen aprieta durante 6a, cerrar
+alli con commit parcial y dejar 6b/6c para la siguiente sesion.
+
+---
+
 ## [2026-08-24 12:15] T9a (parcial 4/6) — Endpoints de P2: captura parcial y confirmacion
 **Estado:** EN PROGRESO — bloque 4 de T9a. Faltan endpoints P4 (bloque 5) y P5/P6/P7
 (bloque 6, subdividido por endpoint). Vistas de Vue van en T9b, tarea aparte.

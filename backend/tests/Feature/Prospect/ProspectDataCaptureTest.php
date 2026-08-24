@@ -62,32 +62,14 @@ final class ProspectDataCaptureTest extends TestCase
         return (string) $response->json('data.session.access_token');
     }
 
-    /**
-     * En tests, el contenedor se reutiliza entre peticiones y el guard de
-     * Passport cachea el `user()` resuelto. Si en la misma prueba se emiten
-     * dos tokens y se ejerce el segundo tras haber ejercido el primero, el
-     * guard devuelve al usuario del primero y el aislamiento por token se
-     * evapora en el test aunque en produccion no exista el problema —cada
-     * request abre un ciclo del kernel nuevo—. Se resetea de forma explicita
-     * antes de cada peticion autenticada.
-     */
-    private function resetGuard(): void
-    {
-        $this->app['auth']->forgetGuards();
-    }
-
     /** @param array<string, mixed> $body */
     private function patchWith(string $token, array $body): TestResponse
     {
-        $this->resetGuard();
-
         return $this->withHeader('Authorization', 'Bearer '.$token)->patchJson('/api/v1/prospects/me', $body);
     }
 
     private function confirmWith(string $token): TestResponse
     {
-        $this->resetGuard();
-
         return $this->withHeader('Authorization', 'Bearer '.$token)->postJson('/api/v1/prospects/me/confirm');
     }
 

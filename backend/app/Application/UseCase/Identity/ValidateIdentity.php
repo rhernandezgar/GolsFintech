@@ -7,6 +7,9 @@ namespace App\Application\UseCase\Identity;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
+use App\Domain\Exception\DocumentNotOwnedByProspectException;
+use App\Domain\Exception\ProspectDataNotConfirmedException;
+use App\Domain\Identity\OverallValidationStatus;
 use App\Domain\Identity\RecordedIdentityValidation;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Port\DocumentRepository;
@@ -27,12 +30,31 @@ use RuntimeException;
  * revision, y llenar la bitacora despues no reconstruye lo que se le mostro al
  * prospecto (RS-06).
  *
- * El evento cambia de tipo segun el desenlace: `identity.validation_succeeded`
- * si INE, RENAPO, coincidencia de datos y vigencia responden verificado y no hay
- * marca antifraude; `identity.validation_rejected` en cualquier otro caso.
- * `identity.validation_requested` se emite ANTES de llamar al proveedor: si la
- * llamada revienta, queda constancia de que se intento —lo que un pico repetido
- * sobre el mismo expediente delataria como riesgo R-01—.
+ * ### Precondicion: expediente confirmado (Fase 1)
+ *
+ * P4 va DESPUES de P2, y P2 termina en `confirmData()`. Ejecutar validacion
+ * sobre un prospecto sin `data_confirmed` consultaria a INE y RENAPO con datos
+ * incompletos, cobraria la llamada y no serviria para autorizar el credito.
+ * Se corta con `ProspectDataNotConfirmedException`.
+ *
+ * ### Los tres desenlaces del validador y por que hay tres eventos
+ *
+ * El evento de cierre distingue **tres** estados, no dos:
+ *
+ * - `_succeeded` cuando INE, RENAPO, coincidencia de datos y vigencia del
+ *   documento responden todos verificado y no hay marca antifraude.
+ * - `_rejected` cuando algo respondio expresamente no verificado o la
+ *   evaluacion antifraude marco.
+ * - `_deferred` cuando el proveedor devolvio "en proceso" o "no disponible"
+ *   sin decir verificado ni no verificado. Colapsar esto a `_rejected` seria
+ *   negar credito a alguien con identidad valida por una caida temporal del
+ *   proveedor (riesgo R-03). Se guarda la fila y P4 puede reintentarse.
+ *
+ * `identity.validation_requested` se emite ANTES de llamar al proveedor: si
+ * la llamada revienta con excepcion, queda constancia de que se intento —lo
+ * que un pico repetido sobre el mismo expediente delataria como riesgo R-01—.
+ *
+ * ### CURP fuera del log
  *
  * Nunca se registra CURP ni RFC en la metadata del evento (regla de seguridad
  * no negociable 1, VUL-04): la respuesta cruda del proveedor viene ya
@@ -60,6 +82,12 @@ final readonly class ValidateIdentity
             throw new RuntimeException('El prospecto indicado no existe.');
         }
 
+        if (! $prospect->hasConfirmedData()) {
+            throw new ProspectDataNotConfirmedException(
+                'La validacion de identidad exige el expediente confirmado.'
+            );
+        }
+
         $document = null;
         $documentId = null;
 
@@ -69,7 +97,9 @@ final readonly class ValidateIdentity
             if ($document === null || $document->prospectId() !== $prospect->id()) {
                 // Sin filtrar por prospecto se podria validar contra la
                 // identificacion de otro expediente (CWE-639). No pasa.
-                throw new RuntimeException('El documento indicado no pertenece al prospecto.');
+                throw new DocumentNotOwnedByProspectException(
+                    'El documento indicado no pertenece al prospecto.'
+                );
             }
 
             $documentId = $document->id();
@@ -90,10 +120,14 @@ final readonly class ValidateIdentity
         $result = $this->validator->validate($prospect, $document);
         $recorded = $this->validations->save((int) $prospect->id(), $documentId, $result, $now);
 
+        $closingEvent = match ($result->overallStatus()) {
+            OverallValidationStatus::Verified => AuditEventType::IdentityValidationSucceeded,
+            OverallValidationStatus::Rejected => AuditEventType::IdentityValidationRejected,
+            OverallValidationStatus::Pending => AuditEventType::IdentityValidationDeferred,
+        };
+
         $this->auditLogger->append(new AuditEvent(
-            eventType: $result->isVerified()
-                ? AuditEventType::IdentityValidationSucceeded
-                : AuditEventType::IdentityValidationRejected,
+            eventType: $closingEvent,
             affectedEntity: 'IdentityValidation',
             affectedEntityId: $recorded->id,
             prospectId: $prospect->id(),
