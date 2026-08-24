@@ -583,10 +583,29 @@ fi
 if [ "$NHTTP" -le 1 ]; then
   no "Capa HTTP sin implementar ($NHTTP archivo): los controles de T10 no se acreditan"
 else
-  RAW=$(grep -rnE "['\"](curp|rfc|tokenized_card_number)['\"][[:space:]]*=>" backend/app/Http 2>/dev/null \
+  # La regla es "ningun recurso de salida devuelve CURP/RFC/PAN en claro". Se
+  # restringe a Controllers y Resources —donde de verdad se proyecta a salida—:
+  # Http/Requests declara reglas de VALIDACION DE ENTRADA sobre esos mismos
+  # nombres, que es lo que el cliente envia, y contarlo como fuga contamina la
+  # senal. La precision del criterio sigue siendo la misma (autorizado por el
+  # usuario el 2026-08-24). Si aparece una nueva capa HTTP donde se proyecte
+  # (Http/Responses u otro), se anade aqui.
+  RAW=$(grep -rnE "['\"](curp|rfc|tokenized_card_number)['\"][[:space:]]*=>" \
+          backend/app/Http/Controllers backend/app/Http/Resources 2>/dev/null \
         | grep -viE "mask|hash|last_four" | wc -l | tr -d ' ')
   [ "$RAW" = "0" ] && ok "Ningun recurso HTTP expone CURP/RFC/PAN sin enmascarar" \
-                   || no "$RAW campo(s) exponen CURP/RFC/PAN en claro en backend/app/Http"
+                   || no "$RAW campo(s) exponen CURP/RFC/PAN en claro en Controllers/Resources"
+
+  # Verificacion complementaria (cubre el hueco que el ajuste anterior abre):
+  # ningun controlador ni recurso emite el accesor de CURP, RFC o el token de
+  # tarjeta sin pasar por un enmascarador. Detecta patrones como
+  # `$prospect->curp` o `$record->tokenized_card_number` colandose a la
+  # respuesta sin `mask`/`hash`/`last_four` en la misma linea.
+  LEAKACC=$(grep -rnE "->\s*(curp|rfc|tokenizedCardNumber|tokenized_card_number)\b" \
+              backend/app/Http/Controllers backend/app/Http/Resources 2>/dev/null \
+            | grep -viE "mask|hash|last_four" | wc -l | tr -d ' ')
+  [ "$LEAKACC" = "0" ] && ok "Ningun accesor CURP/RFC/PAN se emite sin enmascarar en Controllers/Resources" \
+                       || no "$LEAKACC acceso(s) a curp/rfc/tokenized_card_number sin mask/hash en Controllers/Resources"
 
   LEAKMSG=$(grep -rnE "getMessage\(\)|getTraceAsString\(\)" backend/app/Http 2>/dev/null | wc -l | tr -d ' ')
   [ "$LEAKMSG" = "0" ] && ok "Los controladores no devuelven getMessage()/traza al cliente" \
