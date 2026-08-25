@@ -14,7 +14,10 @@ const client = axios.create({
 
 client.interceptors.request.use((config) => {
   const session = useSessionStore()
-  if (session.accessToken) {
+  // No se pisa una cabecera puesta por quien hace la llamada: P7 consulta con
+  // una credencial administrativa que no es la sesion del recorrido, y sin
+  // esta condicion el interceptor la sustituiria por el token del prospecto.
+  if (session.accessToken && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${session.accessToken}`
   }
   return config
