@@ -98,6 +98,33 @@ final class ApiAccessControlTest extends TestCase
             ->assertStatus(401);
     }
 
+    /**
+     * Regresion de VUL-14. Todas las pruebas de 401 de arriba usan `getJson` y
+     * compania, que ponen `Accept: application/json`; esa cabecera tapaba el
+     * defecto, porque con ella la excepcion se salta el calculo del destino de
+     * redireccion. Sin la cabecera —un navegador abriendo la URL a mano, un
+     * cliente que no la declara— el middleware intentaba redirigir a la ruta
+     * `login`, que en esta aplicacion no existe, y respondia **500 con traza**
+     * en vez de 401: informacion tecnica al cliente (regla de seguridad 8) por
+     * una peticion sin autenticar (regla 9).
+     *
+     * La prueba ejerce el mismo endpoint SIN `Accept: application/json`. Es
+     * deliberado que no use `getJson`.
+     */
+    #[Test]
+    public function a_request_without_the_json_accept_header_still_answers_401(): void
+    {
+        $response = $this->get('/api/v1/me');
+
+        $response->assertStatus(401);
+        // Y no una redireccion ni un error del servidor: las dos serian
+        // respuestas equivocadas a "no te has autenticado".
+        $this->assertFalse($response->isRedirect(), 'Un invitado no se redirige: se le responde 401.');
+        $response->assertJsonStructure(['message']);
+        // Sin traza ni rutas del servidor en el cuerpo (regla de seguridad 8).
+        $response->assertJsonMissingPath('trace');
+    }
+
     #[Test]
     public function the_endpoints_are_authenticated_by_default(): void
     {
