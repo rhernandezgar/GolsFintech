@@ -151,4 +151,122 @@ return [
         'refresh_token_ttl_days' => (int) env('OAUTH_REFRESH_TOKEN_TTL', 14),
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | Cabeceras de seguridad (T11, VUL-08)
+    |---------------------------------------------------------------------------
+    |
+    | Las aplica `Http\Middleware\SecurityHeaders` a TODA respuesta. Viven en
+    | configuracion y no cableadas en el middleware para que endurecerlas en
+    | produccion sea un cambio de entorno y no un despliegue de codigo.
+    |
+    */
+
+    'headers' => [
+
+        /*
+        | POLITICA DE CONTENIDO — RESTRICTIVA DESDE EL PRIMER DIA.
+        |
+        | `default-src 'none'` y ninguna excepcion. No es una postura ambiciosa:
+        | es la descripcion honesta de lo que este backend hace. NO SIRVE HTML
+        | NI ASSETS. Responde JSON, incluida la pantalla de consentimiento de
+        | OAuth —`Passport::authorizationView` devuelve un JsonResponse, no una
+        | vista—, y la SPA se sirve aparte. Un documento JSON no carga scripts,
+        | ni hojas de estilo, ni tipografias, ni imagenes: negarlo todo no
+        | rompe nada porque no hay nada que romper.
+        |
+        | POR QUE NO SE EMPIEZA PERMISIVA. Arrancar con `'unsafe-inline'` «para
+        | no romper nada» y endurecer despues es el camino por el que las CSP
+        | acaban con esa excepcion puesta para siempre: nadie vuelve a tocar una
+        | politica que ya no se queja, y la excepcion sobrevive al motivo que la
+        | justificaba. Si manana hace falta una excepcion concreta, se anade
+        | aqui con su justificacion escrita al lado, nunca abriendo la politica
+        | entera.
+        |
+        | SI ALGUIEN SIRVE LA SPA DESDE LARAVEL, ESTO LA ROMPE. Es deliberado:
+        | obliga a decidir la politica de la SPA de forma consciente en vez de
+        | heredar una pensada para otra cosa.
+        |
+        | Las cuatro directivas de abajo no las cubre `default-src` y cada una
+        | cierra un vector propio:
+        |   - base-uri     'none': impide que una inyeccion cambie la base de
+        |                          las URL relativas.
+        |   - form-action  'none': impide que un formulario inyectado envie a
+        |                          un tercero.
+        |   - frame-ancestors 'none': clickjacking. Es la version moderna de
+        |                          X-Frame-Options, que se manda igual abajo
+        |                          para navegadores que solo entienden aquella.
+        |   - object-src   'none': plugins. Redundante con default-src, y se
+        |                          escribe igual porque es la directiva que
+        |                          algunos analizadores buscan por su nombre.
+        */
+        'content_security_policy' => env('CONTENT_SECURITY_POLICY', implode('; ', [
+            "default-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+            "object-src 'none'",
+        ])),
+
+        /*
+        | HSTS — CORTO EN DESARROLLO, LARGO EN PRODUCCION.
+        |
+        | El valor de produccion es 31536000 (un ano), que es el minimo que pide
+        | la lista de precarga y el que corresponde a un dominio con certificado
+        | de una autoridad reconocida.
+        |
+        | AQUI NO. En desarrollo el certificado es autofirmado, y HSTS es
+        | PEGAJOSO: el navegador recuerda la instruccion durante todo el
+        | `max-age` y, mientras dure, se niega a abrir el sitio por HTTP y no
+        | deja saltarse el aviso del certificado. Un ano de max-age puesto por
+        | descuido en un portatil deja el 6060 inservible en ese navegador hasta
+        | que alguien encuentre el ajuste para borrarlo. Cinco minutos hacen que
+        | el error se corrija solo.
+        |
+        | Nota: RFC 6797 §8.1 obliga a los navegadores a IGNORAR esta cabecera
+        | cuando llega por HTTP, asi que hoy —el servidor de desarrollo es HTTP
+        | pelado— no tiene efecto ninguno. El valor corto protege el dia que
+        | alguien ponga TLS autofirmado delante, que es cuando si lo tendria.
+        |
+        | `includeSubDomains` y `preload` quedan APAGADOS por defecto: los dos
+        | son compromisos que exceden a esta aplicacion. `includeSubDomains`
+        | afecta a subdominios que quiza sirva otro equipo, y `preload` es
+        | practicamente irreversible —salir de la lista tarda meses—. Se
+        | encienden en produccion, por entorno, cuando alguien decida asumirlos.
+        */
+        'hsts' => [
+            'max_age' => (int) env(
+                'HSTS_MAX_AGE',
+                env('APP_ENV') === 'production' ? 31_536_000 : 300
+            ),
+            'include_subdomains' => filter_var(
+                env('HSTS_INCLUDE_SUBDOMAINS', false), FILTER_VALIDATE_BOOLEAN
+            ),
+            'preload' => filter_var(
+                env('HSTS_PRELOAD', false), FILTER_VALIDATE_BOOLEAN
+            ),
+        ],
+
+        /*
+        | `no-referrer`: ni siquiera el origen viaja al destino. En una API de
+        | credito, una URL de referencia puede delatar a que institucion
+        | financiera pertenece el usuario; `strict-origin-when-cross-origin`
+        | —el habitual— seguiria mandando el origen.
+        */
+        'referrer_policy' => env('REFERRER_POLICY', 'no-referrer'),
+
+        /*
+        | Cabeceras que revelan el producto y su version. No son una
+        | vulnerabilidad por si mismas, pero le ahorran al atacante el paso de
+        | averiguar contra que esta: sabiendo `PHP/8.4.24` puede ir directo a
+        | los fallos conocidos de esa version en vez de sondear.
+        |
+        | `X-Powered-By` la anade PHP y se quita en el middleware, porque
+        | `expose_php` es configuracion global del servidor y no se toca sin
+        | consultar (CLAUDE.md §2). `Server` la pone el servidor web delante;
+        | se intenta quitar igual por si la respuesta pasa entera.
+        */
+        'remove' => ['X-Powered-By', 'Server', 'X-AspNet-Version', 'X-Runtime'],
+    ],
+
 ];

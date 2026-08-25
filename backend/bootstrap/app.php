@@ -3,6 +3,7 @@
 use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\EnforceReadOnlyRole;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -51,14 +52,25 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         /*
-        | Identificador de correlacion en TODA peticion de la API, y el primero
-        | de la pila: si se registrara despues de otro middleware, un rechazo
-        | temprano —el limitador de peticiones, por ejemplo— saldria sin
-        | identificador, que es justo una de las respuestas que soporte necesita
-        | poder rastrear.
+        | GLOBALES, no de grupo, y esto no es un detalle de estilo.
+        |
+        | Registrados en los grupos `web` y `api` se saltaban un caso entero: la
+        | peticion a una ruta que NO EXISTE. El router lanza el 404 antes de
+        | resolver el grupo, asi que esa respuesta salia sin cabeceras de
+        | seguridad y sin identificador de correlacion. Lo detecto la prueba que
+        | ejerce un 404 real —no la que comprueba que el middleware esta
+        | registrado, que pasaba igual—, y es otra vez la leccion de VUL-14:
+        | verificar la configuracion no es verificar el comportamiento.
+        |
+        | Van los primeros de la pila para que un rechazo temprano —el limitador
+        | de peticiones, por ejemplo— tampoco se quede sin ellos: son justo las
+        | respuestas que soporte necesita poder rastrear y las que un atacante
+        | provoca a proposito.
         */
-        $middleware->api(prepend: [AssignCorrelationId::class]);
-        $middleware->web(prepend: [AssignCorrelationId::class]);
+        $middleware->prepend([
+            SecurityHeaders::class,
+            AssignCorrelationId::class,
+        ]);
 
         $middleware->alias([
             'role' => EnsureRole::class,

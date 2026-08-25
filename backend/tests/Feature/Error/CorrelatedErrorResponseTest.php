@@ -129,6 +129,22 @@ final class CorrelatedErrorResponseTest extends TestCase
     }
 
     #[Test]
+    public function a_request_to_a_route_that_does_not_exist_is_also_correlatable(): void
+    {
+        // Este caso NO pasa por el grupo `api`: el router lanza el 404 antes de
+        // resolverlo. Con el middleware registrado en el grupo, esta respuesta
+        // salia sin identificador y sin cabeceras de seguridad, y ninguna
+        // prueba de «esta registrado» lo habria notado. Por eso el middleware
+        // es global, y por eso este caso tiene prueba propia.
+        $response = $this->getJson('/api/v1/ruta-que-no-existe')->assertStatus(404);
+
+        $this->assertMatchesRegularExpression(
+            self::ULID,
+            (string) $response->headers->get(AssignCorrelationId::HEADER),
+        );
+    }
+
+    #[Test]
     public function each_request_gets_its_own_identifier(): void
     {
         $this->registerExplodingRoute();

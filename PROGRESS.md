@@ -5,6 +5,92 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 20:15] T11 — Cabeceras de seguridad. **T11 COMPLETO**
+**Estado:** COMPLETADO — T11 pasa a **OK**, 5 ok / 0 falta / 0 revisar.
+**Commit:** ver `git log --oneline` (commit `T11: cabeceras de seguridad...`).
+**Evidencia:** `php artisan test` -> **443 pruebas / 1322 aserciones en verde**
+(14 nuevas); `pint` limpio; `curl -I http://127.0.0.1:6060` devuelve las cuatro
+cabeceras; `bash scripts/verificar_avance.sh` -> **99 OK / 1 FALTA / 0 REVISAR**
+(era 95/3/0 al empezar T11). Lo unico que falta ya es el hook de T12.
+
+### La CSP es `default-src 'none'`, y eso no es ambicion: es exactitud
+
+Este backend **no sirve HTML ni assets**. Responde JSON, y la pantalla de
+consentimiento de OAuth tambien —`Passport::authorizationView` devuelve un
+`JsonResponse`, no una vista—; la SPA se sirve aparte. Un documento JSON no
+carga scripts, ni hojas de estilo, ni tipografias: negarlo todo no rompe nada
+porque no hay nada que romper.
+
+**Por que no se empieza permisiva.** Arrancar con `'unsafe-inline'` «para no
+romper nada» y endurecer despues es el camino por el que las CSP acaban con esa
+excepcion puesta para siempre: nadie vuelve a tocar una politica que ya no se
+queja, y la excepcion sobrevive al motivo que la justificaba.
+
+**El unico caso que pedia excepcion se resolvio al reves.** La pagina de
+bienvenida del scaffold traia un bloque `<style>` en linea. Habia dos salidas:
+abrir la politica de TODA la aplicacion con `'unsafe-inline'` para que una
+pagina que nadie usa se viera bonita, o quitar el estilo. **Se quito el
+estilo.** La prueba `the_only_html_page_needs_no_exception_to_the_policy`
+detiene su reaparicion, y `the_content_policy_contains_no_escape_hatch` falla si
+aparece `unsafe-inline`, `unsafe-eval`, `*` o `data:`: relajar la politica
+obliga a cambiar una prueba, y cambiarla se ve en la revision.
+
+### HSTS: corto aqui, un ano en produccion
+
+HSTS es **pegajoso**. El navegador obedece durante todo el `max-age` y, mientras
+dure, se niega a abrir el sitio por HTTP y no deja saltarse el aviso del
+certificado. Con el certificado autofirmado del entorno, un ano puesto por
+descuido deja el 6060 inservible en ese navegador hasta que expire. Cinco
+minutos hacen que el error se corrija solo.
+
+Precision que conviene tener escrita: **hoy la cabecera no tiene efecto
+ninguno**, porque RFC 6797 §8.1 obliga a los navegadores a ignorarla cuando
+llega por HTTP y el servidor de desarrollo es HTTP pelado. El valor corto
+protege el dia que alguien ponga TLS autofirmado delante.
+
+Produccion: `max-age=31536000`. `includeSubDomains` y `preload` **apagados por
+defecto**: el primero afecta a subdominios que quiza sirva otro equipo y salir
+de la lista de precarga tarda meses. Se encienden por entorno cuando alguien
+decida asumirlos. `preload` sin `includeSubDomains` no se emite siquiera, porque
+la propia lista lo rechazaria y seria una cabecera que sugiere una proteccion
+inexistente.
+
+### Lo demas
+
+`X-Content-Type-Options: nosniff` —sin ella, un archivo subido que el navegador
+decida interpretar como HTML es XSS almacenado (CWE-430)—, `Referrer-Policy:
+no-referrer` —ni el origen viaja: en una API de credito, la URL de referencia
+puede delatar a que institucion pertenece el usuario— y `X-Frame-Options: DENY`
+como companera antigua de `frame-ancestors`, para los navegadores que solo
+entienden aquella.
+
+**Huella del servidor retirada.** `X-Powered-By: PHP/8.4.24` desaparece. La
+anade PHP fuera del objeto respuesta, en la cola del SAPI, asi que
+`headers->remove()` no basta y hace falta `header_remove()`. No se toco
+`expose_php`, que es configuracion global del servidor (CLAUDE.md §2).
+
+### El middleware es GLOBAL, y lo descubrio una prueba
+
+Registrado en los grupos `web` y `api` se saltaba un caso entero: **la peticion
+a una ruta que no existe**. El router lanza el 404 antes de resolver el grupo,
+asi que esa respuesta salia sin cabeceras de seguridad y sin identificador de
+correlacion.
+
+Lo detecto la prueba que ejerce un 404 real. **La comprobacion de «el
+middleware esta registrado en bootstrap/app.php» pasaba igual**, y es
+exactamente el error de VUL-14: verificar la configuracion no es verificar el
+comportamiento. Por eso las 13 pruebas de este bloque afirman sobre
+`$response->headers` y sobre respuestas de distinta naturaleza —HTML, JSON con
+exito, 401, 404 fuera del grupo, 422—, y las de error importan mas que las de
+exito porque son otras ramas de salida y las que un atacante provoca a
+proposito.
+
+**Siguiente paso pendiente:** T12 — hook pre-commit con detector de secretos y
+Pint, con `core.hooksPath` apuntando a `.githooks` para que viaje en el
+repositorio. Es lo unico que queda del plan T1-T12.
+
+---
+
 ## [2026-08-25 19:30] T10 — Errores normalizados con identificador de correlacion. **T10 COMPLETO**
 **Estado:** COMPLETADO — T10 pasa a **OK** en el script, 8 ok / 0 falta / 0 revisar.
 **Commit:** ver `git log --oneline` (commit `T10: errores normalizados...`).
