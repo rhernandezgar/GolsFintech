@@ -169,7 +169,14 @@ final class TotpAuthenticator
 
         $encoded = '';
         foreach (str_split($bits, 5) as $chunk) {
-            $encoded .= self::BASE32_ALPHABET[bindec(str_pad($chunk, 5, '0', STR_PAD_RIGHT))];
+            // `bindec` devuelve float cuando el numero no cabe en un entero, asi
+            // que su tipo declarado es `float|int` y un indice flotante no es un
+            // indice valido de cadena. Aqui el fragmento es de 5 bits —maximo
+            // 31— y nunca desborda, pero esto es codigo de generacion de
+            // secretos: la conversion explicita cierra el hueco en el sitio en
+            // vez de dejarlo apoyado en el rango del dato (VUL-11).
+            $index = (int) bindec(str_pad($chunk, 5, '0', STR_PAD_RIGHT));
+            $encoded .= self::BASE32_ALPHABET[$index];
         }
 
         return str_pad($encoded, (int) (ceil(strlen($encoded) / 8) * 8), '=');

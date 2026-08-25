@@ -14,6 +14,10 @@ secrets/
 
 # ---- Dependencias ----
 /backend/vendor/
+# Dependencias del composer.json de la raiz, que solo existe para las
+# herramientas de analisis (Psalm). Se versionan composer.json y composer.lock;
+# el arbol instalado no.
+/vendor/
 node_modules/
 
 # ---- Backend (Laravel) ----
@@ -55,3 +59,12 @@ Thumbs.db
 /tmp/
 *.log
 verificar.txt
+
+# ---- Salidas de los analizadores (T12) ----
+# Se versiona la CONFIGURACION del analisis -psalm.xml, codeql-config.yml- y el
+# registro de lo que encontro -BUGS.md-, no sus salidas: son regenerables con el
+# comando que cada entrada de BUGS.md cita, y la base de CodeQL lleva dentro una
+# copia comprimida del arbol.
+/psalm.txt
+/resultados-vue.cs
+/golfintech-vue-db/

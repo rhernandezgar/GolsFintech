@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<psalm
+    errorLevel="5"
+    resolveFromConfigFile="true"
+    arrayCache="false"
+    xmlns:xsi="http://w3.org"
+    xsi:schemaLocation="https://getpsalm.org vendor/vimeo/psalm/config.xsd"
+>
+    <projectFiles>
+        <!-- Analiza únicamente tu código fuente dentro de backend -->
+        <directory name="backend" />
+        <ignoreFiles>
+            <!-- Evita que el OOM Killer colapse la RAM con librerías externas.
+                 Además, el código de terceros no es código propio: un hallazgo
+                 ahí no se corrige editando la dependencia (VUL-13). -->
+            <directory name="vendor" />
+            <directory name="backend/vendor" />
+
+            <!-- Vistas Blade compiladas: artefactos de ejecución, no código
+                 fuente. Se regeneran solas, no se editan y no están en el
+                 repositorio (.gitignore las excluye), así que analizarlas
+                 produce hallazgos que nadie puede corregir en el origen. -->
+            <directory name="backend/storage/framework/views" />
+        </ignoreFiles>
+    </projectFiles>
+</psalm>

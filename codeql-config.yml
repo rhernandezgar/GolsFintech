@@ -1,0 +1,32 @@
+# Alcance del análisis de CodeQL sobre este repositorio.
+#
+# Se pasa con `--codescanning-config` al crear la base:
+#
+#   codeql database create golfintech-vue-db \
+#       --language=javascript --source-root=. \
+#       --codescanning-config=codeql-config.yml
+#
+# POR QUÉ EXISTE. La primera ejecución (2026-08-24) barrió el árbol entero e
+# incluyó `backend/vendor/`, de donde salió el único hallazgo de JavaScript del
+# informe: un recurso de `filp/whoops` (VUL-13). Es código de terceros y de una
+# dependencia de desarrollo: no se corrige editándolo —el siguiente
+# `composer install` deshace el cambio— y contarlo como hallazgo del proyecto
+# desdibuja lo que sí es código propio. El alcance del análisis es el código
+# que este repositorio puede corregir.
+
+paths-ignore:
+  # Dependencias de terceros. No son código propio y no se editan.
+  - backend/vendor
+  - vendor
+  - frontend/node_modules
+  - worker/node_modules
+
+  # Artefactos de ejecución: vistas Blade compiladas y build del frontend. Se
+  # regeneran solos, no están versionados y no tienen origen que corregir.
+  - backend/storage/framework/views
+  - backend/public/build
+  - frontend/dist
+
+  # La base de datos del propio análisis, que lleva dentro una copia del árbol
+  # (`src.zip`) y se analizaría a sí misma.
+  - golfintech-vue-db

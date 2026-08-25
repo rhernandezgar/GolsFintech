@@ -65,18 +65,32 @@ final readonly class CreditPolicy
      */
     private function assertRatesDecreaseAsTheProfileImproves(): void
     {
+        /**
+         * Se declara como lista y no se deja inferir: por si solo el analizador
+         * lee una tupla de exactamente tres posiciones, y entonces el indice que
+         * calcula el recorrido —`int<1, max>`— cae fuera del rango que sabe
+         * probar y los tres accesos quedan marcados como invalidos (VUL-12). El
+         * dato no cambia; lo que cambia es que el indice queda acotado al tipo
+         * que el recorrido usa de verdad.
+         *
+         * @var list<CreditType> $ordered
+         */
         $ordered = [CreditType::Microcredit, CreditType::Personal, CreditType::Business];
+        $count = count($ordered);
 
-        for ($i = 1; $i < count($ordered); $i++) {
-            $better = $this->annualRateFor($ordered[$i]);
-            $worse = $this->annualRateFor($ordered[$i - 1]);
+        for ($i = 1; $i < $count; $i++) {
+            $betterProfile = $ordered[$i];
+            $worseProfile = $ordered[$i - 1];
+
+            $better = $this->annualRateFor($betterProfile);
+            $worse = $this->annualRateFor($worseProfile);
 
             if ($better->tenThousandths >= $worse->tenThousandths) {
                 throw new InvalidArgumentException(sprintf(
                     'Tasas no monotonas: %s (%s %%) no puede ser mayor o igual que %s (%s %%).',
-                    $ordered[$i]->value,
+                    $betterProfile->value,
                     $better->toPercentageString(),
-                    $ordered[$i - 1]->value,
+                    $worseProfile->value,
                     $worse->toPercentageString()
                 ));
             }
