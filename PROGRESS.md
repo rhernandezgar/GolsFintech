@@ -5,6 +5,186 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 15:10] T9b — Las 7 vistas de Vue. **T9 COMPLETO**. T12 (parcial): SAST
+**Estado:** COMPLETADO — T9 pasa a **OK** en el script (era su unico `[FALTA]`).
+T12 sigue **EN PROGRESO**: falta el hook pre-commit con detector de secretos.
+
+**Commits (7, en orden):**
+- `0d37beb` — `T12 (parcial): correcciones del analisis estatico`.
+- `f67edc9` — `T9b (parcial): andamiaje de la SPA y P3 con el sondeo del OCR`.
+- `6ad2f84` — `T9b (parcial): P4 con los tres desenlaces y sin decir que fallo`.
+- `cbf91f7` — `T9b (parcial): P5 sin una sola regla de negocio en el navegador`.
+- `e11b07e` — `T9b (parcial): P6, confirmacion con la sesion de cliente ya intercambiada`.
+- `6b58a34` — `T9b: P7, consulta administrativa con autorizacion por campo. Las 7 vistas`.
+- `dda4bc6` — `T9b: 401 para el invitado sin cabecera Accept` (VUL-14).
+- `922a3de` — `T9b: la rama manual deja de ser un callejon sin salida`.
+
+**Evidencia:** `php artisan test` -> **398 pruebas / 1136 aserciones en verde**
+(1 nueva); `./vendor/bin/pint --test` limpio; `npm run build` compila (116
+modulos); `bash scripts/verificar_avance.sh` -> **94 OK / 4 FALTA / 1 REVISAR**
+(era 90/5/3 al abrir la sesion).
+
+### Lo que habia sin commitear al empezar
+
+La sesion anterior se corto sin dejar entrada en PROGRESS.md. El arbol tenia
+tres cosas mezcladas: el andamiaje de la SPA con 2 de 7 vistas (T9b), Psalm
+instalado en la raiz (T12) y los artefactos de las dos ejecuciones de analisis.
+El router importaba las 5 vistas que no existian, asi que **el frontend no
+compilaba**. Ademas `vendor/` de la raiz y `golfintech-vue-db/` no estaban en
+`.gitignore`: se anadieron junto con las salidas de los analizadores, porque lo
+que se versiona es la CONFIGURACION del analisis y el registro de hallazgos, no
+sus salidas, que son regenerables con el comando que cada entrada cita.
+
+### T12 (parcial): las 947 incidencias, explicadas
+
+**Ninguna es una vulnerabilidad de seguridad.** El desglose esta en `BUGS.md`
+porque un numero grande sin desglose sugiere un codigo lleno de problemas: 499
+son ruido de configuracion (Psalm sin el plugin de Laravel, que no resuelve
+fachadas ni Eloquent), 332 son codigo muerto aparente (el contenedor inyecta lo
+que el analizador no ve llamado) y 87 son de estilo. Las dos primeras
+categorias son artefactos del **como se ejecuto** el analisis, no propiedades
+del codigo, y por eso no abren entrada.
+
+Tres hallazgos reales, cada uno con su comando: **VUL-11** (corregida,
+`TotpAuthenticator:172`, indice `float|int` en generacion de secretos),
+**VUL-12** (corregida, `CreditPolicy:71-79`, indice sin rango probado en el
+invariante que sostiene VUL-09) y **VUL-13** (aceptada, whoops, codigo de
+terceros: se acota el alcance en vez de editarlo). Comprobado que whoops no se
+carga fuera de desarrollo: solo en `packages-dev` del lock, sin referencias en
+codigo propio, y `APP_DEBUG` resuelve a `false` por omision.
+
+El alcance vive en `psalm.xml` y en `codeql-config.yml` (nuevo), no en la linea
+de comandos, para que viaje con el repositorio. Los dos excluyen `vendor/` y
+`backend/storage/framework/views`.
+
+### VUL-14: un 500 con traza donde tenia que haber un 401
+
+**Lo encontro levantar la aplicacion, no leer el codigo**, y esa es la parte
+que conviene retener. Una peticion sin token a cualquier endpoint autenticado
+respondia **500 con traza completa** si no llevaba `Accept: application/json`.
+`Authenticate` construye el destino de la redireccion del invitado **antes** de
+lanzar la excepcion y **siempre**; como aqui no existe ninguna ruta `login`,
+ese calculo reventaba. Incumplia la regla 9 (no contestaba 401) y la 8 (con
+`APP_DEBUG=true` filtraba traza y rutas absolutas).
+
+**Por que 11 pruebas de 401 no lo veian:** todas usan `getJson`/`postJson`, que
+ponen `Accept: application/json`, y con esa cabecera la excepcion se salta el
+calculo. La regresion nueva ejerce el endpoint **sin** la cabecera —con `get()`
+y no `getJson()`, deliberadamente—.
+
+### Los dos defectos de flujo que aparecieron al recorrerlo
+
+1. **Rebote de navegacion en P2.** Al confirmar navegaba siempre a
+   `DocumentUploadView`, y el guard redirigia de ahi a `ProspectDataFormView`
+   en la rama manual: volver a la misma pantalla. Confirmar los datos es lo que
+   habilita P4, asi que las dos ramas convergen ahora en
+   `VerificationResultView`.
+
+2. **La rama manual era un callejon sin salida.** El veredicto "verificado" de
+   P4 exige documento —sin uno la vigencia del documento no se puede evaluar y
+   el conjunto queda `pending`—. Es deliberado, pero la SPA partia de que
+   "manual" significaba "sin documento", que es falso: **lo que elige P1 es
+   como se CAPTURAN los datos, no si hace falta identificacion.** Con el guard
+   bloqueando P3, quien elegia captura manual no llegaba nunca a P5. Se retira
+   el bloqueo, y P4 distingue las dos causas de `pending`: sin documento ofrece
+   subirlo, con documento mantiene el reintento, que ahi si puede cambiar algo.
+
+### Las siete vistas
+
+| Pantalla | Lo que fija |
+|---|---|
+| P1 `WelcomeView` | CAPTCHA ademas del throttle; nace la credencial |
+| P2 `ProspectDataFormView` | Captura parcial; `missing_fields` del servidor |
+| P3 `DocumentUploadView` | 202 + `status_url`; sondeo con espera creciente |
+| P4 `VerificationResultView` | Tres desenlaces; nunca dice que check fallo |
+| P5 `CreditSimulationView` | Cero reglas de negocio en el navegador |
+| P6 `AuthorizationConfirmedView` | Token intercambiado sin corte; tarjeta opcional |
+| P7 `CustomerLookupView` | Autorizacion por campo (RS-05) reflejada, no decidida |
+
+**P3** sonda de 1.5 s a 5 s, con tope de 3 minutos y salida explicita. Renueva
+la sesion mientras espera: el token vive 30 minutos y una extraccion con tres
+reintentos se acerca al limite. Sigue la `status_url` que da el servidor pero
+consume su ruta relativa, para salir por el mismo origen.
+
+**P5** no calcula nada. Ninguna formula de amortizacion, ningun redondeo,
+ninguna regla de elegibilidad, y **ninguna conversion a numero**: los importes
+viajan como cadenas decimales y se pintan como cadenas, porque pasarlos por el
+flotante de JavaScript meteria error de coma flotante en dinero. El desplegable
+de plazos es ayuda de interfaz; quien decide es `Term::fromMonths`.
+
+**P6** recibe el token ya intercambiado. La aceptacion se dispara desde el
+boton de P5 y no al montar P6: al montar, una recarga volveria a intentar
+aceptar y el servidor respondaria `ALREADY_DECIDED` —el control que impide que
+un doble click cree dos clientes—, dejando al cliente sin su propia vista.
+
+**P7** pinta `declared_income` condicionado a que **venga** en la respuesta, no
+segun un rol que decida la vista: el filtrado ocurre en el servidor.
+
+### Recorrido de extremo a extremo, comprobado
+
+Contra la API real y **por el proxy de la SPA** (127.0.0.1:5173 -> 6060), con
+las mismas llamadas y en el mismo orden que hacen las vistas:
+
+- P1 emite token con scope `prospect-session`.
+- P3 responde 202 con `status_url`; el sondeo devuelve `ocr_status`.
+- P2 captura (200) y confirma (200).
+- P4 con documento -> `verified`. **R-01 comprobado con grep sobre la
+  respuesta:** no aparece `ine_status`, `renapo_status`, `data_match`,
+  `document_validity` ni `fraud`.
+- P5 -> oferta completa (personal, 28.50 %, CAT 32.53 %, 86 800.00 MXN a 12
+  meses); plazo 7 -> **422**.
+- P6 -> cliente `CU-20260825-LWSD24UP`, linea activa, tarjeta `visa ****9128`.
+  **Transicion de token verificada en los dos sentidos:** el de prospecto pasa
+  a **401**, el de cliente responde **200**.
+- P7 -> **403** con token de cliente; **200 sin `declared_income`** con rol
+  admin; **200 CON `declared_income`** con rol analista de riesgos (RS-05
+  funcionando); numero inexistente -> **404**.
+- Las 7 rutas de la SPA responden 200 y las 7 vistas estan en el bundle.
+
+**Lo que NO se pudo comprobar:** el recorrido visual en un navegador. Este
+servidor es headless y no hay automatizacion de navegador disponible. Todo lo
+de arriba es verificacion a nivel de API y de compilacion; **la revision visual
+de las siete pantallas queda pendiente de que el usuario abra
+`http://127.0.0.1:5173`**.
+
+### Dos huecos que quedan anotados y NO se resolvieron aqui
+
+1. **No hay pantalla de acceso administrativo en la SPA.** P7 exige un rol
+   administrativo y el prototipo de la Fase 2 no contempla esa pantalla; el
+   acceso real pasa por el flujo OAuth del backend. No se invento una. Para
+   poder ejercer P7 se admite pegar un token, detras de `import.meta.env.DEV`:
+   en una compilacion de produccion ese campo no se genera. **Es un hueco del
+   diseno, no de T9b**, y decidirlo es del usuario.
+2. **En la rama OCR, P2 no puede mostrar los datos extraidos.**
+   `GET /prospects/me` devuelve solo `has_data`, nunca datos personales. El
+   formulario aparece vacio a proposito y esta vista no los inventa; como el
+   PATCH solo envia lo que se escriba, confirmar sin tocar nada conserva lo
+   extraido. **Revisar los datos antes de confirmar, como pide P2 del
+   prototipo, exigiria un endpoint que hoy no existe.**
+
+**Siguiente paso pendiente:** T11 — cabeceras de seguridad. Es la unica tarea
+con dos `[FALTA]` y el script ya puede comprobarla en vivo ahora que el 6060
+responde.
+
+1. `backend/app/Http/Middleware/SecurityHeaders.php` nuevo, registrado en el
+   grupo de `bootstrap/app.php`. Debe emitir `Strict-Transport-Security`,
+   `Content-Security-Policy`, `X-Content-Type-Options: nosniff` y
+   `Referrer-Policy`. El criterio del script es literal: `curl -I` tiene que
+   devolver esas cuatro.
+2. La CSP hay que contrastarla contra lo que sirve la SPA de Vite en
+   desarrollo, que inyecta scripts en linea; conviene una directiva distinta
+   por entorno y no relajarla en produccion para que funcione el modo dev.
+3. Prueba de feature que ejerza un endpoint cualquiera y compruebe las cuatro
+   cabeceras en la respuesta.
+
+**Nota sobre T11 en el script.** Su segundo `[FALTA]` era `[REVISAR]` al abrir
+la sesion, y cambio **porque el 6060 esta levantado y la comprobacion en vivo
+ya puede correr**. No es una regresion: es la verificacion informando por fin
+del estado real de una tarea no iniciada. Ningun control paso de OK a FALTA en
+esta sesion.
+
+---
+
 ## [2026-08-24 16:10] T9a (6/6) — Endpoints P5, P6 y P7. **T9a COMPLETO**
 **Estado:** COMPLETADO — el recorrido HTTP del prospecto y del cliente esta
 entero. Faltan las 7 vistas de Vue (T9b, tarea aparte); solo con ellas T9
