@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Identity;
 
 use App\Domain\Access\Role;
+use App\Domain\Audit\AuditEvent;
+use App\Domain\Audit\AuditEventType;
+use App\Domain\Port\AuditLogger;
+use App\Infrastructure\Persistence\Eloquent\AuditLogRecord;
 use App\Infrastructure\Persistence\Eloquent\IdentityDocumentRecord;
 use App\Infrastructure\Persistence\Eloquent\ProspectRecord;
 use App\Models\User;
@@ -221,5 +225,104 @@ final class DocumentUploadTest extends TestCase
         // 404 y no 403 a proposito: un 403 le confirmaria al que prueba
         // identificadores que ese documento existe.
         $this->getJson('/api/v1/identity-documents/'.$trackingId)->assertStatus(404);
+    }
+
+    // ============================================== VUL-15 ==================
+
+    /**
+     * El defecto exacto de VUL-15, en el nivel HTTP.
+     *
+     * NINGUNA de las pruebas de este archivo lo cubria, y el motivo es preciso:
+     * todas fabrican el prospecto en `capture_status => 'started'`, que es el
+     * orden de la rama OCR —documento primero, datos despues—. La rama manual
+     * llega al documento en `data_confirmed`, y ese estado no lo ejercia nadie.
+     */
+    #[Test]
+    public function a_confirmed_prospect_can_still_upload_its_identity_document(): void
+    {
+        $prospect = $this->prospect();
+        $prospect->update(['capture_status' => 'data_confirmed']);
+
+        Passport::actingAs($this->prospectUser($prospect), ['prospect-session']);
+
+        $this->post('/api/v1/identity-documents', [
+            'document' => $this->jpeg(),
+            'document_type' => 'INE',
+        ], ['Accept' => 'application/json'])->assertStatus(202);
+
+        // Y el estado NO retrocede: si lo hiciera, P4 responderia 422
+        // PROSPECT_DATA_NOT_CONFIRMED y la rama manual seguiria bloqueada.
+        $this->assertSame('data_confirmed', $prospect->fresh()->capture_status);
+    }
+
+    /**
+     * El hueco de trazabilidad que VUL-15 dejaba al descubierto, y que es mas
+     * grave que el 500: se almacenaba un documento y la bitacora no lo
+     * registraba, porque el evento se emitia despues de la transicion que
+     * reventaba.
+     */
+    #[Test]
+    public function a_stored_document_always_leaves_its_trace_in_the_audit_log(): void
+    {
+        $prospect = $this->prospect();
+        $prospect->update(['capture_status' => 'data_confirmed']);
+
+        Passport::actingAs($this->prospectUser($prospect), ['prospect-session']);
+
+        $this->post('/api/v1/identity-documents', [
+            'document' => $this->jpeg(),
+            'document_type' => 'INE',
+        ], ['Accept' => 'application/json'])->assertStatus(202);
+
+        $this->assertSame(
+            1,
+            IdentityDocumentRecord::query()->where('prospect_id', $prospect->id)->count()
+        );
+        $this->assertTrue(
+            AuditLogRecord::query()
+                ->where('prospect_id', $prospect->id)
+                ->where('event_type', AuditEventType::DocumentUploaded->value)
+                ->exists(),
+            'Se almaceno un documento sin dejar rastro en la bitacora (RF-13).'
+        );
+    }
+
+    /**
+     * Atomicidad: si algo falla mientras se registra, no queda fila huerfana.
+     *
+     * Se provoca haciendo reventar la ESCRITURA EN LA BITACORA, que es el
+     * ultimo paso del bloque transaccional. Antes de VUL-15 ese fallo dejaba la
+     * fila del documento persistida; ahora la transaccion la deshace.
+     *
+     * Contra MySQL de verdad y no contra dobles: con dobles en memoria no hay
+     * rollback que ejercer, asi que una prueba unitaria puede comprobar el
+     * ORDEN de las escrituras pero nunca su atomicidad.
+     */
+    #[Test]
+    public function a_failure_while_recording_leaves_no_orphan_row(): void
+    {
+        $prospect = $this->prospect();
+        Passport::actingAs($this->prospectUser($prospect), ['prospect-session']);
+
+        $this->app->bind(AuditLogger::class, fn (): AuditLogger => new class implements AuditLogger
+        {
+            public function append(AuditEvent $event): void
+            {
+                throw new \RuntimeException('Fallo simulado al escribir en la bitacora.');
+            }
+        });
+
+        $this->post('/api/v1/identity-documents', [
+            'document' => $this->jpeg(),
+            'document_type' => 'INE',
+        ], ['Accept' => 'application/json'])->assertStatus(500);
+
+        $this->assertSame(
+            0,
+            IdentityDocumentRecord::query()->where('prospect_id', $prospect->id)->count(),
+            'La transaccion tenia que deshacer la fila del documento.'
+        );
+        // Y el estado del prospecto tampoco queda a medias.
+        $this->assertSame('started', $prospect->fresh()->capture_status);
     }
 }

@@ -8,6 +8,7 @@ use App\Http\Middleware\AssignCorrelationId;
 use Database\Seeders\OAuthPersonalAccessClientSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
 use Tests\TestCase;
@@ -212,5 +213,56 @@ final class CorrelatedErrorResponseTest extends TestCase
         $response->assertJsonPath('error_code', 'PROSPECT_DATA_INCOMPLETE');
         $response->assertJsonStructure(['message', 'error_code', 'missing_fields', 'correlation_id']);
         $this->assertMatchesRegularExpression(self::ULID, $response->json('correlation_id'));
+    }
+
+    /**
+     * Hallazgo de la auditoria de la cabecera `Accept` (VUL-15, bloque final).
+     *
+     * La primera version de la normalizacion exentaba a TODA la familia
+     * `HttpExceptionInterface`, con el argumento de que su codigo de estado ya
+     * era el correcto. Cierto, pero su CUERPO no: con `APP_DEBUG` activo,
+     * Laravel les mete clase, ruta absoluta del servidor y traza completa. Y
+     * entre esas respuestas estan los 403 de autorizacion por objeto —justo
+     * donde un atacante esta sondeando— y los 404 que existen para no revelar
+     * si un recurso existe.
+     *
+     * Contradecia ademas lo que este mismo bloque decia de si mismo: «ni
+     * siquiera con APP_DEBUG activo». Ahora conservan el estado y pierden el
+     * cuerpo.
+     */
+    #[Test]
+    #[DataProvider('httpErrorsThatMustNotLeak')]
+    public function a_framework_http_error_keeps_its_status_and_loses_its_body(
+        string $method,
+        string $uri,
+        int $expectedStatus,
+    ): void {
+        $this->assertTrue(config('app.debug'), 'La prueba pierde sentido con el modo depuracion apagado.');
+
+        $response = $this->json($method, $uri);
+
+        // El estado se conserva: convertirlo en 500 seria mentir.
+        $response->assertStatus($expectedStatus);
+
+        $body = $response->getContent();
+        $this->assertStringNotContainsString('trace', $body);
+        $this->assertStringNotContainsString('Exception', $body);
+        $this->assertStringNotContainsString('/opt/', $body);
+        $this->assertStringNotContainsString('vendor/laravel', $body);
+
+        $this->assertSame(
+            ['message', 'error_code', 'correlation_id'],
+            array_keys($response->json()),
+        );
+        $this->assertSame('HTTP_'.$expectedStatus, $response->json('error_code'));
+    }
+
+    /** @return array<string, array{string, string, int}> */
+    public static function httpErrorsThatMustNotLeak(): array
+    {
+        return [
+            '404 de ruta inexistente' => ['GET', '/api/v1/no-existe', 404],
+            '405 de metodo no permitido' => ['DELETE', '/api/v1/prospects', 405],
+        ];
     }
 }

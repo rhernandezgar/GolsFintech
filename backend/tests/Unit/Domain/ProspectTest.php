@@ -102,4 +102,67 @@ final class ProspectTest extends TestCase
 
         $this->assertSame(CaptureStatus::DataCaptured, $prospect->captureStatus());
     }
+
+    // ============================================== VUL-15 =================
+
+    /**
+     * El caso que produjo VUL-15: la rama manual llega al documento DESPUES de
+     * confirmar los datos, porque el veredicto «verificado» de P4 exige
+     * documento. Antes esto lanzaba `InvalidStateTransitionException` y el
+     * endpoint devolvia 500.
+     */
+    public function test_uploading_a_document_after_confirming_does_not_undo_the_confirmation(): void
+    {
+        $prospect = $this->startedProspect();
+        $this->capture($prospect);
+        $prospect->confirmData();
+
+        $this->assertSame(CaptureStatus::DataConfirmed, $prospect->captureStatus());
+
+        $prospect->markDocumentUploaded();
+
+        // No lanza, y sobre todo NO retrocede: `hasConfirmedData()` compara con
+        // DataConfirmed exactamente, asi que un retroceso dejaria a P4
+        // respondiendo 422 y la rama manual bloqueada otra vez, en silencio.
+        $this->assertSame(CaptureStatus::DataConfirmed, $prospect->captureStatus());
+        $this->assertTrue($prospect->hasConfirmedData());
+    }
+
+    public function test_uploading_a_document_twice_after_confirming_stays_confirmed(): void
+    {
+        // Un reintento de carga -P3 lo permite tras un OCR fallido- no puede
+        // degradar el estado en la segunda pasada.
+        $prospect = $this->startedProspect();
+        $this->capture($prospect);
+        $prospect->confirmData();
+
+        $prospect->markDocumentUploaded();
+        $prospect->markDocumentUploaded();
+
+        $this->assertTrue($prospect->hasConfirmedData());
+    }
+
+    public function test_the_no_op_does_not_resurrect_an_abandoned_file(): void
+    {
+        // El no-op es SOLO para data_confirmed. Un expediente abandonado sigue
+        // siendo terminal: si esto dejara de lanzar, subir un documento
+        // reabriria un tramite que el negocio da por cerrado.
+        $prospect = $this->startedProspect();
+        $prospect->abandon();
+
+        $this->expectException(InvalidStateTransitionException::class);
+        $prospect->markDocumentUploaded();
+    }
+
+    public function test_the_ocr_branch_still_moves_to_document_uploaded(): void
+    {
+        // La rama OCR no cambia: el documento es el mecanismo de captura y
+        // `document_uploaded` es su estado temprano legitimo.
+        $prospect = $this->startedProspect();
+
+        $prospect->markDocumentUploaded();
+
+        $this->assertSame(CaptureStatus::DocumentUploaded, $prospect->captureStatus());
+        $this->assertFalse($prospect->hasConfirmedData());
+    }
 }

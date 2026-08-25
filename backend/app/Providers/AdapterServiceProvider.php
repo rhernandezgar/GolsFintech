@@ -14,6 +14,7 @@ use App\Domain\Port\IdentityValidator;
 use App\Domain\Port\NotificationSender;
 use App\Domain\Port\OcrService;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Port\TransactionManager;
 use App\Infrastructure\Card\SimulatedCardIssuer;
 use App\Infrastructure\Identity\IdentityScenario;
 use App\Infrastructure\Identity\SimulatedIdentityValidator;
@@ -28,6 +29,7 @@ use App\Infrastructure\Persistence\Eloquent\EloquentCustomerRegistry;
 use App\Infrastructure\Persistence\Eloquent\EloquentDocumentRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentIdentityValidationRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentProspectRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentTransactionManager;
 use App\Infrastructure\Queue\BullMqQueue;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Redis\Factory as RedisFactory;
@@ -92,6 +94,16 @@ final class AdapterServiceProvider extends ServiceProvider
 
         $this->bindPort(AuditLogger::class, 'adapters.persistence', [
             'eloquent' => static fn (Application $app): AuditLogger => $app->make(EloquentAuditLogger::class),
+        ]);
+
+        // Unidad de trabajo para las escrituras que cruzan varios puertos. La
+        // carga de una identificacion toca documento, prospecto y bitacora: sin
+        // esto, un fallo a mitad dejaba la fila del documento persistida y sin
+        // su evento en la bitacora (VUL-15).
+        $this->bindPort(TransactionManager::class, 'adapters.persistence', [
+            'eloquent' => static fn (Application $app): TransactionManager => $app->make(
+                EloquentTransactionManager::class
+            ),
         ]);
 
         $this->bindPort(IdentityValidationRepository::class, 'adapters.persistence', [

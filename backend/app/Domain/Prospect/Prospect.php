@@ -243,8 +243,44 @@ final class Prospect
         return $missing;
     }
 
+    /**
+     * Registra que el prospecto aporto su identificacion.
+     *
+     * ### Por que confirmar los datos NO impide subir un documento (VUL-15)
+     *
+     * `capture_status` mide el progreso de la CAPTURA, y las dos ramas del
+     * diseno llegan al documento en momentos distintos:
+     *
+     *   - Rama OCR: el documento es el mecanismo de captura. Se sube primero y
+     *     de el salen los datos, asi que `document_uploaded` es un estado
+     *     temprano y la transicion desde `started` es la normal.
+     *   - Rama manual: el prospecto escribe sus datos, los confirma, y solo
+     *     despues aporta la identificacion —porque el veredicto «verificado»
+     *     de P4 exige documento—. Aqui el documento no captura nada: es la
+     *     EVIDENCIA que la verificacion de identidad necesita.
+     *
+     * En el segundo caso, mover el estado a `document_uploaded` seria un
+     * retroceso: desharia una confirmacion que el prospecto ya dio. Y no seria
+     * solo semantico, porque `hasConfirmedData()` compara con `DataConfirmed`
+     * exactamente: P4 pasaria a responder 422 `PROSPECT_DATA_NOT_CONFIRMED` y
+     * la rama manual quedaria bloqueada otra vez, ahora en silencio.
+     *
+     * Por eso, con los datos ya confirmados, esto es un **no-op deliberado**.
+     * No es una excepcion tolerada ni un `catch` disimulado: es la regla. El
+     * documento se guarda igual —lo hace `DocumentRepository`— y la bitacora
+     * registra `document.uploaded` igual; lo unico que no cambia es un estado
+     * que ya no describe este paso.
+     *
+     * Fijado por `ProspectTest::uploading_a_document_after_confirming_does_not_undo_the_confirmation`.
+     * Sin esa prueba, el proximo refactor que «simplifique» este metodo
+     * devolveria el 500 de VUL-15.
+     */
     public function markDocumentUploaded(): void
     {
+        if ($this->captureStatus === CaptureStatus::DataConfirmed) {
+            return;
+        }
+
         $this->transitionTo(CaptureStatus::DocumentUploaded);
     }
 

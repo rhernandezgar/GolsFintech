@@ -17,6 +17,7 @@ use App\Domain\Shared\Money;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Doubles\FakeOcrService;
+use Tests\Support\Doubles\ImmediateTransactionManager;
 use Tests\Support\Doubles\InMemoryAuditLogger;
 use Tests\Support\Doubles\InMemoryDocumentRepository;
 use Tests\Support\Doubles\InMemoryProspectRepository;
@@ -37,17 +38,26 @@ final class UploadIdentityDocumentTest extends TestCase
 
     private FakeOcrService $ocr;
 
+    private ImmediateTransactionManager $transactions;
+
     protected function setUp(): void
     {
         $this->prospects = new InMemoryProspectRepository;
         $this->documents = new InMemoryDocumentRepository;
         $this->audit = new InMemoryAuditLogger;
         $this->ocr = new FakeOcrService;
+        $this->transactions = new ImmediateTransactionManager;
     }
 
     private function useCase(): UploadIdentityDocument
     {
-        return new UploadIdentityDocument($this->prospects, $this->documents, $this->ocr, $this->audit);
+        return new UploadIdentityDocument(
+            $this->prospects,
+            $this->documents,
+            $this->ocr,
+            $this->audit,
+            $this->transactions,
+        );
     }
 
     private function storedProspect(): Prospect

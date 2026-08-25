@@ -18,6 +18,7 @@ use App\Domain\Port\IdentityValidator;
 use App\Domain\Port\NotificationSender;
 use App\Domain\Port\OcrService;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Port\TransactionManager;
 use App\Domain\Prospect\CaptureMethod;
 use App\Domain\Prospect\Prospect;
 use App\Domain\Prospect\Sex;
@@ -32,6 +33,7 @@ use App\Infrastructure\Persistence\Eloquent\EloquentCustomerRegistry;
 use App\Infrastructure\Persistence\Eloquent\EloquentDocumentRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentIdentityValidationRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentProspectRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentTransactionManager;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -39,6 +41,7 @@ use Tests\Support\Doubles\FakeCardIssuer;
 use Tests\Support\Doubles\FakeIdentityValidator;
 use Tests\Support\Doubles\FakeNotificationSender;
 use Tests\Support\Doubles\FakeOcrService;
+use Tests\Support\Doubles\ImmediateTransactionManager;
 use Tests\Support\Doubles\InMemoryAuditLogger;
 use Tests\Support\Doubles\InMemoryCreditApplicationRepository;
 use Tests\Support\Doubles\InMemoryCustomerRegistry;
@@ -79,6 +82,7 @@ final class PortBindingTest extends TestCase
             'IdentityValidator' => [IdentityValidator::class, SimulatedIdentityValidator::class],
             'CardIssuer' => [CardIssuer::class, SimulatedCardIssuer::class],
             'NotificationSender' => [NotificationSender::class, SimulatedNotificationSender::class],
+            'TransactionManager' => [TransactionManager::class, EloquentTransactionManager::class],
         ];
     }
 
@@ -117,6 +121,7 @@ final class PortBindingTest extends TestCase
             IdentityValidator::class => FakeIdentityValidator::class,
             CardIssuer::class => FakeCardIssuer::class,
             NotificationSender::class => FakeNotificationSender::class,
+            TransactionManager::class => ImmediateTransactionManager::class,
         ];
 
         $this->assertArrayHasKey($port, $doubles, 'Falta el doble de prueba del puerto '.$port);

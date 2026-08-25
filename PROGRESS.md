@@ -5,6 +5,123 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 22:10] VUL-15 y VUL-16 — El recorrido visual encuentra lo que 443 pruebas no vieron
+**Estado:** COMPLETADO — dos defectos corregidos, ambos introducidos por el
+asistente, ambos con regresion fijada.
+**Commit:** ver `git log --oneline` (commit `T9b/T10: VUL-15 y VUL-16...`).
+**Evidencia:** `php artisan test` -> **455+ pruebas en verde, 0 avisos**;
+`pint` limpio; `audit:verify-chain` termina en 0; verificado en vivo.
+
+### VUL-15: el 500 de P3 en la rama manual
+
+**Lo encontro el usuario usando la aplicacion**, no una herramienta. Ni las 443
+pruebas, ni Psalm, ni CodeQL, ni el script de auditoria lo habian visto.
+
+`Prospect::TRANSITIONS` declara `'data_confirmed' => [Abandoned]`, asi que subir
+la identificacion despues de confirmar los datos lanzaba
+`InvalidStateTransitionException`. **Lo introdujo el commit `922a3de`** (T9b),
+que retiro el guard del router y anadio en P4 el boton «subir mi
+identificacion»: habilito el recorrido P2 -> confirmar -> P4 -> P3, que el
+dominio nunca permitio. **Y no lo ejercito**: el recorrido de extremo a extremo
+de aquel bloque fue P1 -> P3 -> P2 -> P4, el orden de la rama OCR, que es el
+unico que el dominio aceptaba.
+
+Ninguna de las tres hipotesis del usuario intervenia. `OCR_DRIVER` vale
+`simulated` por defecto, asi que BullMQ y Redis no estaban en el camino, y el
+archivo se escribia correctamente.
+
+**Lo grave no era el 500.** El archivo se escribe en el controlador y la fila se
+persistia ANTES de la transicion que reventaba. Medido en la reproduccion:
+`identity_documents` 4 -> 5 y archivos en disco 2 -> 3, con la fila en
+`ocr_status=pending` y `ocr_job_id=NULL` —nunca encolada— y la bitacora del
+prospecto en `prospect.started -> data_captured -> data_confirmed`, **sin
+`document.uploaded`**. Se almacenaba un documento de identidad y la bitacora no
+lo registraba (RF-13).
+
+**Correccion en tres partes:**
+
+1. **No-op explicito.** `markDocumentUploaded()` no hace nada si el estado ya es
+   `data_confirmed`. `capture_status` mide el progreso de la CAPTURA, y en la
+   rama manual el documento no captura nada: es la evidencia que P4 necesita.
+   **Permitir la transicion en vez del no-op habria cambiado el 500 por un
+   bloqueo silencioso**, porque `hasConfirmedData()` compara con `DataConfirmed`
+   exactamente y P4 habria pasado a responder 422.
+2. **Atomicidad.** El caso de uso se reordena en tres tramos: lo que puede
+   fallar sin escribir nada; documento, prospecto y evento de bitacora en **una
+   sola transaccion** (puerto `TransactionManager` nuevo, porque la unidad
+   atomica cruza tres puertos y ningun adaptador puede abrirla por los otros);
+   y el encolado **fuera**, porque sostener una transaccion durante la latencia
+   de una red es peor que el problema que resuelve.
+3. **Artefactos limpiados.** 3 filas huerfanas y 3 archivos, identificados por
+   las tres condiciones del defecto (`pending` + `ocr_job_id NULL` + sin evento).
+   `audit_logs` no se toco: es append-only y la cadena sigue integra.
+
+### Por que 443 pruebas no lo vieron
+
+La hipotesis del doble de `OcrService` era razonable y **no era la causa**. Las
+razones reales son dos:
+
+1. **`DocumentUploadTest` solo fabrica prospectos en `started`**, que es el orden
+   de la rama OCR. El estado `data_confirmed` no lo ejercia nadie.
+2. **`ProspectJourneyTest` no toca HTTP** (`grep -c postJson` -> 0): invoca los
+   casos de uso. Cubre el encadenamiento del dominio y **por construccion no
+   puede ver** un defecto que depende del orden en que las pantallas llaman a la
+   API.
+
+Entre las dos faltaba el recorrido completo, en el orden real, por la superficie
+real. **No existia ninguna prueba de extremo a extremo sobre HTTP.**
+
+`tests/Feature/Journey/FullFlowOverHttpTest.php` (nuevo) recorre **las dos
+ramas** enteras sobre HTTP, P1 a P6 con la transicion de token incluida. Las dos
+y no solo la que fallaba, porque el defecto consistio en arreglar una rama y
+romper la otra sin ejercerla.
+
+**Comprobado que detecta el defecto:** revirtiendo la correccion, el recorrido
+manual falla con `Expected response status code [202] but received 500` y el de
+OCR sigue pasando. Esa asimetria demuestra que el hueco era el descrito.
+
+### La auditoria de la cabecera Accept encontro OTRA cosa (VUL-16)
+
+Se ejercitaron los diez tipos de respuesta con y sin `Accept: application/json`,
+comparando estado, tipo de contenido y cuerpo.
+
+**Sobre la hipotesis: limpio.** Ningun control depende hoy de la cabecera. Los
+diez tipos devuelven el mismo codigo y el mismo tipo de contenido en ambos
+casos, sostenido por `shouldRenderJsonWhen` —cuya condicion `is('api/*')` no
+mira la cabecera— y por la correccion de VUL-14.
+
+**Pero el escaneo destapo una fuga distinta.** Los cuerpos de 403, 404, 405 y
+`abort()` llevaban clase, ruta absoluta del servidor y traza completa, con y sin
+la cabecera. **Lo habia introducido yo en T10**, al exentar de la normalizacion
+a toda la familia `HttpExceptionInterface` con el argumento de que su codigo de
+estado ya era correcto: el estado si, el cuerpo no. Afectaba a los 403 de
+autorizacion por objeto y a los 404 que existen para no revelar si un recurso
+existe —las respuestas que recibe justo quien esta sondeando—, y contradecia lo
+que ese mismo bloque decia de si mismo: «ni siquiera con APP_DEBUG activo».
+
+Corregido: `HttpException` **conserva el estado y pierde el cuerpo**. El mensaje
+sale de una tabla por estado y no de la excepcion, para que el texto no dependa
+de la higiene del mensaje de una libreria que no controlamos.
+
+**La leccion que queda anotada:** la auditoria encontro un defecto real, pero no
+el que buscaba. Comparar dos variantes de la misma peticion obliga a mirar la
+respuesta entera, y mirarla entera fue lo que destapo una fuga sin relacion con
+la hipotesis de partida.
+
+### De regalo: un aviso propio cerrado
+
+La suite emitia `Constant FRAMEWORK_RENDERED_EXCEPTIONS already defined` en cada
+arranque a partir del segundo —lo introduje en T10 declarandola como constante
+de fichero, y `bootstrap/app.php` se evalua una vez por arranque—. Pasa a
+variable local del closure. La suite queda con **0 avisos**.
+
+**Siguiente paso pendiente:** ninguno del plan. Queda la pantalla de acceso
+administrativo para P7, registrada como limitacion conocida del alcance, y
+terminar el recorrido visual de las siete pantallas —P3 ya funciona; faltan P4 a
+P7 en el navegador—.
+
+---
+
 ## [2026-08-25 20:50] T12 — Hook pre-commit. **T12 COMPLETO. PLAN T1-T12 CERRADO**
 **Estado:** COMPLETADO — T12 pasa a **OK**, 10 ok / 0 falta / 0 revisar.
 **Con esto las trece entradas del resumen del script quedan en OK.**
