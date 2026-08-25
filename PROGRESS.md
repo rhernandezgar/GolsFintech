@@ -5,6 +5,93 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 20:50] T12 — Hook pre-commit. **T12 COMPLETO. PLAN T1-T12 CERRADO**
+**Estado:** COMPLETADO — T12 pasa a **OK**, 10 ok / 0 falta / 0 revisar.
+**Con esto las trece entradas del resumen del script quedan en OK.**
+**Commit:** ver `git log --oneline` (commit `T12: hook pre-commit...`).
+**Evidencia:** `bash scripts/verificar_avance.sh` -> **102 OK / 0 FALTA /
+0 REVISAR** (era 99/1/0 al empezar T12); `php artisan test` -> 443 pruebas / 1322 aserciones en verde;
+`pint` limpio.
+
+### Por que este control es distinto de todos los demas
+
+Es el unico que actua **antes de que el dato exista en la historia**. Un secreto
+commiteado no se arregla borrandolo en el commit siguiente: sigue en la
+historia, en cada clon y en cada fork, y la unica reparacion real es **rotar la
+credencial** y reescribir la historia. Detectarlo aqui cuesta un segundo;
+detectarlo despues cuesta una rotacion.
+
+`core.hooksPath` apunta a `.githooks` para que el hook **viaje en el
+repositorio**: `.git/hooks` no se clona, asi que un hook que viva alli protege
+al que lo escribio y a nadie mas.
+
+**Un clon nuevo tiene que ejecutar `git config core.hooksPath .githooks`.** Es
+configuracion local por diseno de git —permitir que un repositorio ejecute
+codigo al clonarlo seria un problema de seguridad mucho peor que el que el hook
+resuelve—, asi que el paso es manual y queda anotado aqui.
+
+Se puede saltar con `--no-verify`, y no se intenta impedirlo: un hook no es un
+control del servidor, es una red contra el descuido. Quien lo salte esta
+tomando una decision consciente, que es la diferencia que importa.
+
+### Dos fallos propios que solo aparecieron al ejercitarlo
+
+Los dos habrian pasado inadvertidos leyendo el hook, y los dos lo dejaban
+**inservible sin que nada lo indicara**.
+
+**1. El separador de PHP.** El patron de «valor literal asignado a un nombre que
+suena a secreto» miraba `[:=]`, y en PHP la forma mas comun es
+`'client_secret' => '...'`. El primer intento de commitear un secreto de prueba
+**paso limpiamente**. Un detector que no atrapa el caso mas frecuente del
+lenguaje del proyecto es peor que no tenerlo: da confianza sin darla.
+
+**2. `grep` no es `grep`.** El de este servidor es **ugrep**, que rechaza
+`'^\+\+\+'` como sintaxis invalida. La linea que extraia las lineas anadidas del
+diff **devolvia la lista vacia**, y un detector sin entrada no falla: pasa, y
+deja pasar el commit. Se cambio a `awk`, donde la condicion es explicita y no
+depende de la implementacion instalada. **Este es el modo de fallo que hay que
+tener presente en cualquier control basado en grep**, incluido el propio script
+de auditoria.
+
+Los dos son la misma leccion de VUL-14 otra vez: leer el control no es
+ejercerlo.
+
+### Como se verifico
+
+Doce casos contra el hook real, no contra su codigo:
+
+**Bloquea** — llave privada, llave de AWS, token de GitHub, cadena de conexion
+con contrasena embebida, secreto en JS con dos puntos, y `.env`,
+`.env.production`, `*.pem`, `id_rsa` y `auth.json` forzados con `git add -f`
+(el caso real: `.gitignore` ya los para, pero forzar el indice lo esquiva).
+
+**No bloquea** — `env('TURNSTILE_SECRET')`, `config('security.pii_hash_key')`,
+`process.env.API_SECRET_KEY`, marcadores tipo `your-client-secret-here`,
+`.env.example` y prosa que mencione la palabra «secreto». Cero falsos
+positivos, que es lo que decide si el hook sobrevive: uno que estorba se
+esquiva con `--no-verify` por costumbre, y entonces tampoco corre el detector.
+
+**Pint** se probo con un archivo mal formateado (bloquea, y dice el comando que
+lo arregla) y con el mismo archivo despues de `pint` (pasa). Corre solo sobre
+los `.php` del indice: sobre el arbol entero seria lento y empujaria al mismo
+`--no-verify` por costumbre.
+
+El secreto de prueba se borro y no queda rastro en la historia: los dos intentos
+que llegaron a commitear se deshicieron con `git reset --hard`, y `git log`
+confirma que la punta sigue siendo el commit de T11.
+
+**Siguiente paso pendiente:** ninguno del plan T1-T12. Lo que queda son las dos
+cosas anotadas y no resueltas, ambas decision del usuario: el **recorrido visual
+de las siete pantallas** en `http://127.0.0.1:5173` (este servidor es headless y
+no tiene automatizacion de navegador) y la **pantalla de acceso administrativo
+para P7**, que es un hueco del prototipo de la Fase 2 y esta registrado en
+`SECURITY_CHECKLIST.md` como limitacion conocida del alcance. Queda ademas la
+revision pendiente anotada en T9b: el resto de la suite usa `getJson`/`postJson`
+casi en todas partes y no se ha auditado si algun otro control depende de esa
+cabecera para pasar.
+
+---
+
 ## [2026-08-25 20:15] T11 — Cabeceras de seguridad. **T11 COMPLETO**
 **Estado:** COMPLETADO — T11 pasa a **OK**, 5 ok / 0 falta / 0 revisar.
 **Commit:** ver `git log --oneline` (commit `T11: cabeceras de seguridad...`).

@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#
+# Hook pre-commit de GolsFintech (T12).
+#
+# Dos controles sobre lo que esta EN EL INDICE, en este orden:
+#
+#   1. Detector de secretos. Bloquea el commit. Es el unico control del
+#      proyecto que actua ANTES de que el dato exista en la historia, y esa es
+#      toda su razon de ser: un secreto commiteado no se arregla borrandolo en
+#      el commit siguiente —sigue en la historia, en cada clon y en cada fork—,
+#      sino rotando la credencial y reescribiendo la historia. Detectarlo aqui
+#      cuesta un segundo; detectarlo despues cuesta una rotacion.
+#
+#   2. Formato con Pint. Tambien bloquea, pero es de higiene: se arregla solo
+#      con un comando y no hay nada que rotar.
+#
+# NO USA `set -e` a proposito, igual que scripts/verificar_avance.sh: un fallo
+# individual no debe abortar la comprobacion y dejar sin correr la siguiente.
+# El codigo de salida se acumula a mano.
+#
+# Se puede saltar con `git commit --no-verify`. No se intenta impedirlo: un hook
+# no es un control de seguridad del servidor, es una red que evita el descuido.
+# Quien decida saltarselo esta tomando una decision consciente, que es
+# exactamente la diferencia que importa.
+
+STATUS=0
+RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; GREEN=$'\033[0;32m'; BOLD=$'\033[1m'; OFF=$'\033[0m'
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT" || exit 1
+
+# Ficheros anadidos, copiados o modificados en el indice. Se excluyen los
+# borrados: no tiene sentido buscar secretos en algo que deja de existir.
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+
+[ -z "$STAGED" ] && exit 0
+
+# =============================================================================
+# 1. Detector de secretos
+# =============================================================================
+
+fail_secret() {
+  printf '%s✖ SECRETO DETECTADO%s  %s\n' "$RED$BOLD" "$OFF" "$1"
+  STATUS=1
+}
+
+# --- 1a. Archivos que no deben versionarse nunca -----------------------------
+#
+# Se comprueba por nombre y no por contenido: un `.env` o una llave privada no
+# necesitan que se les encuentre un patron dentro para ser un error.
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  case "$(basename "$file")" in
+    .env|.env.*)
+      # .env.example es la plantilla SIN valores y si se versiona.
+      [ "$(basename "$file")" = ".env.example" ] && continue
+      fail_secret "$file — un archivo de entorno no se versiona."
+      ;;
+    *.pem|*.key|*.p12|*.pfx|id_rsa|id_dsa|id_ecdsa|id_ed25519|auth.json)
+      fail_secret "$file — material de llave o credencial de composer."
+      ;;
+  esac
+done <<< "$STAGED"
+
+# --- 1b. Patrones en las LINEAS ANADIDAS -------------------------------------
+#
+# Solo lo que se anade (`^+`), no el fichero entero: reformatear un archivo que
+# ya tenia una cadena sospechosa no debe bloquear el commit una y otra vez.
+#
+# `-U0` reduce el diff a las lineas cambiadas y evita que el contexto arrastre
+# falsos positivos de codigo que nadie ha tocado.
+# Se extrae con awk y no con dos `grep`: el patron `^\+\+\+` que hace falta para
+# descartar la cabecera del diff lo interpreta cada implementacion de grep a su
+# manera —el de este servidor es ugrep, que lo rechaza como sintaxis invalida y
+# devuelve la lista VACIA—. Un detector que se queda sin entrada no falla: pasa,
+# y deja pasar el commit. Con awk la condicion es explicita y no depende de la
+# implementacion que haya instalada.
+ADDED="$(git diff --cached -U0 --diff-filter=ACM | awk '/^\+/ && !/^\+\+\+/')"
+
+if [ -n "$ADDED" ]; then
+
+  # Llave privada en claro, en cualquier formato.
+  printf '%s\n' "$ADDED" | grep -qE 'BEGIN [A-Z ]*PRIVATE KEY' \
+    && fail_secret "bloque BEGIN ... PRIVATE KEY en una linea anadida."
+
+  # Identificador de llave de AWS. El formato es fijo y no produce falsos
+  # positivos: no hay nada legitimo con esa forma.
+  printf '%s\n' "$ADDED" | grep -qE '\b(AKIA|ASIA)[0-9A-Z]{16}\b' \
+    && fail_secret "identificador de llave de AWS."
+
+  # Token de acceso personal de GitHub y similares, que llevan prefijo propio.
+  printf '%s\n' "$ADDED" | grep -qE '\b(ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}\b' \
+    && fail_secret "token de GitHub."
+
+  # Cadena de conexion con contrasena embebida.
+  printf '%s\n' "$ADDED" | grep -qE '(mysql|postgres|postgresql|redis|mongodb|amqp)://[^:/@[:space:]]+:[^@[:space:]]+@' \
+    && fail_secret "cadena de conexion con contrasena embebida."
+
+  # Asignacion de un valor literal a un nombre que suena a secreto.
+  #
+  # El separador cubre `=>` ademas de `=` y `:`. La primera version solo
+  # miraba `[:=]` y dejaba pasar la forma mas comun en PHP -un array con
+  # `'client_secret' => '...'`-, que es justo la que se probo y colo el
+  # commit. Un detector que no atrapa el caso mas frecuente del lenguaje
+  # del proyecto es peor que no tenerlo: da confianza sin darla.
+  #
+  # Es el patron que mas falsos positivos puede dar, asi que se filtra antes:
+  # se descartan las lineas que REFERENCIAN una variable de entorno en vez de
+  # contener su valor -`env('PII_HASH_KEY')`, `process.env.X`, `config(...)`-,
+  # que es como el codigo de este repositorio lee sus secretos y es justo lo
+  # correcto. Tambien se descartan los marcadores de plantilla.
+  printf '%s\n' "$ADDED" \
+    | grep -vE "env\(|getenv\(|process\.env|config\(|ENV\[|\\\$_ENV|Environment\." \
+    | grep -viE "your[-_]|xxx|placeholder|changeme|example|dummy|redacted|fake|<[a-z_]+>|\.\.\." \
+    | grep -qiE "(secret|passwd|password|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret|auth[-_]?token)[\"' ]*(=>|::?=|[:=])[[:space:]]*[\"'][^\"']{12,}[\"']" \
+    && fail_secret "valor literal asignado a un nombre que parece un secreto."
+fi
+
+if [ "$STATUS" -ne 0 ]; then
+  printf '\n%sEl commit se ha detenido.%s\n' "$BOLD" "$OFF"
+  printf '  Un secreto que entra en la historia no se arregla en el commit siguiente:\n'
+  printf '  sigue en cada clon y en cada fork. Hay que ROTAR la credencial.\n\n'
+  printf '  Si es un falso positivo, revisalo con:  %sgit diff --cached%s\n' "$BOLD" "$OFF"
+  printf '  y, si de verdad lo es:                  %sgit commit --no-verify%s\n\n' "$BOLD" "$OFF"
+fi
+
+# =============================================================================
+# 2. Formato con Pint
+# =============================================================================
+#
+# Solo sobre los .php de backend/ que esten en el indice. Correr Pint sobre el
+# arbol entero en cada commit lo volveria lento y la gente acabaria usando
+# --no-verify por costumbre, que es peor que no tener hook: se salta tambien el
+# detector de secretos.
+
+STAGED_PHP="$(printf '%s\n' "$STAGED" | grep -E '^backend/.*\.php$')"
+
+if [ -n "$STAGED_PHP" ] && [ -x backend/vendor/bin/pint ]; then
+  # Las rutas se pasan relativas a backend/, que es desde donde corre Pint.
+  RELATIVE_PHP="$(printf '%s\n' "$STAGED_PHP" | sed 's|^backend/||')"
+
+  # shellcheck disable=SC2086
+  PINT_OUT="$( cd backend && ./vendor/bin/pint --test $RELATIVE_PHP 2>&1 )"
+
+  if [ $? -ne 0 ]; then
+    printf '%s✖ FORMATO%s  Pint encuentra archivos sin formatear:\n' "$YELLOW$BOLD" "$OFF"
+    printf '%s\n' "$PINT_OUT" | tail -20 | sed 's/^/    /'
+    printf '\n  Arreglalo con:  %scd backend && ./vendor/bin/pint%s\n\n' "$BOLD" "$OFF"
+    STATUS=1
+  fi
+fi
+
+[ "$STATUS" -eq 0 ] && printf '%s✔%s pre-commit: sin secretos y con el formato en orden.\n' "$GREEN" "$OFF"
+
+exit "$STATUS"

@@ -63,3 +63,30 @@ curl -I http://127.0.0.1:6060      # → HTTP/1.1 200 OK
 Ningún secreto vive en el repositorio. `.env` está ignorado por Git; `.env.example`
 documenta las claves requeridas sin valores reales. Ver las reglas de seguridad no
 negociables en [`CLAUDE.md`](CLAUDE.md) §6.
+
+### Un paso obligatorio tras clonar
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Activa el hook `pre-commit` de [`.githooks/`](.githooks/), que **bloquea el commit** si
+detecta un secreto en el índice y comprueba el formato con Pint.
+
+**Hay que ejecutarlo a mano en cada clon.** Git no aplica `core.hooksPath` por su cuenta
+al clonar, y es deliberado: si un repositorio pudiera ejecutar código con solo clonarlo,
+el problema sería mucho peor que el que el hook resuelve. El hook sí viaja en el
+repositorio —por eso vive en `.githooks/` y no en `.git/hooks/`, que no se clona—, pero
+activarlo es una decisión de quien clona.
+
+Sin este paso el hook no corre y no hay ningún aviso de que no está corriendo. Se
+comprueba así:
+
+```bash
+git config --get core.hooksPath        # → .githooks
+bash scripts/verificar_avance.sh       # → T12: «core.hooksPath apunta a .githooks»
+```
+
+El hook se puede saltar con `git commit --no-verify`, y no se intenta impedirlo: no es un
+control del servidor, es una red contra el descuido. Lo que importa es que saltárselo sea
+una decisión consciente.
