@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
-import { useFlowStore } from '../stores/flow'
 
 import WelcomeView from '../views/WelcomeView.vue'
 import ProspectDataFormView from '../views/ProspectDataFormView.vue'
@@ -47,7 +46,6 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const session = useSessionStore()
-  const flow = useFlowStore()
   const need = to.meta?.requires
 
   if (need === 'prospect-session' && !session.isProspect) return { name: 'WelcomeView' }
@@ -56,13 +54,13 @@ router.beforeEach((to) => {
   // SPA no simula ese login todavia. Se deja pasar y las llamadas fallan
   // con mensaje claro en la vista.
 
-  // Bifurcacion: no se puede entrar directamente a `identificacion` si el
-  // metodo elegido fue manual, ni a `datos` si fue OCR y aun no se ha
-  // confirmado la extraccion. El servidor cortaria igual, pero la vista se
-  // ahorra la ida y vuelta.
-  if (to.name === 'DocumentUploadView' && flow.captureMethod === 'manual') {
-    return { name: 'ProspectDataFormView' }
-  }
+  // NO se bloquea `identificacion` en la rama manual, aunque la primera
+  // version de este guard lo hacia. La premisa era que "manual" significaba
+  // "sin documento", y es falsa: lo que elige P1 es como se CAPTURAN los
+  // datos, no si hace falta identificacion. El veredicto "verificado" de P4
+  // exige documento —sin uno, la vigencia del documento no se puede evaluar y
+  // el conjunto queda pendiente—, asi que la rama manual tambien pasa por P3.
+  // Con el bloqueo, quien elegia captura manual no podia llegar nunca a P5.
   return true
 })
 

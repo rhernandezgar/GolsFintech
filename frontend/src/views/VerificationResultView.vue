@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../composables/useApi'
 import { useFlowStore } from '../stores/flow'
@@ -25,6 +25,16 @@ import AlertMessage from '../components/AlertMessage.vue'
  * proveedor no contesto o esta en proceso, y colapsarlo con `not_verified`
  * negaria credito a alguien con identidad valida por una caida ajena (R-03).
  * Por eso tiene pantalla propia, con reintento y sin lenguaje de rechazo.
+ *
+ * DOS CAUSAS DISTINTAS DE `pending`, Y NO SE TRATAN IGUAL. El veredicto
+ * "verificado" exige documento: sin uno, la vigencia del documento no se puede
+ * evaluar y el conjunto queda pendiente. Es deliberado —no se fuerza un
+ * veredicto favorable sin evidencia—, pero significa que en la rama manual,
+ * donde no se subio identificacion, reintentar no cambia nada nunca: la
+ * pantalla seria un callejon sin salida. Por eso, cuando llega `pending` y no
+ * hay documento en el expediente, lo que se ofrece es subirlo (P3) en vez de
+ * reintentar. Cuando si lo hay, la causa es el proveedor y el reintento si
+ * tiene sentido.
  */
 const router = useRouter()
 const flow = useFlowStore()
@@ -37,6 +47,15 @@ const globalError = ref('')
 const validating = ref(false)
 /** Precondicion de flujo incumplida: P4 exige P2 confirmada. */
 const needsDataConfirmation = ref(false)
+
+/**
+ * `pending` sin documento no se resuelve esperando: falta evidencia, no
+ * respuesta del proveedor. Se distinguen para no ofrecer un reintento que no
+ * puede cambiar el resultado.
+ */
+const needsDocument = computed(
+  () => status.value === 'pending' && !flow.documentPublicId,
+)
 
 async function validate() {
   globalError.value = ''
@@ -84,6 +103,10 @@ function backToData() {
 
 function goOn() {
   router.push({ name: 'CreditSimulationView' })
+}
+
+function uploadDocument() {
+  router.push({ name: 'DocumentUploadView' })
 }
 
 onMounted(validate)
@@ -141,7 +164,19 @@ onMounted(validate)
       </p>
     </template>
 
-    <!-- En proceso. No es un rechazo (R-03). -->
+    <!-- Pendiente por falta de documento: reintentar no cambiaria nada. -->
+    <template v-else-if="needsDocument">
+      <AlertMessage variant="info" title="Nos falta tu identificacion">
+        Para confirmar tu identidad necesitamos ver tu identificacion oficial.
+        Tus datos ya estan guardados; solo falta ese paso.
+      </AlertMessage>
+      <p v-if="folio" class="folio">Folio de verificacion: <code>{{ folio }}</code></p>
+      <div class="actions">
+        <button class="primary" @click="uploadDocument">Subir mi identificacion</button>
+      </div>
+    </template>
+
+    <!-- Pendiente por el proveedor. No es un rechazo (R-03). -->
     <template v-else-if="status === 'pending'">
       <AlertMessage variant="warning" title="Todavia no tenemos respuesta">
         {{ message }}
