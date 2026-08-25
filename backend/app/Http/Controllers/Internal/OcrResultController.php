@@ -57,10 +57,13 @@ final class OcrResultController extends Controller
             // Documento inexistente o resultado que no corresponde al intento
             // vigente. El detalle va al registro del servidor; al llamante solo
             // el codigo (regla 8).
+            // La excepcion entera al registro, en vez de extraerle el texto:
+            // el detalle queda donde tiene que quedar y la capa HTTP no lee el
+            // mensaje tecnico en ningun punto que haya que revisar despues.
             $this->logger->warning('Resultado de OCR rechazado', [
                 'document_public_id' => $input->documentPublicId,
                 'job_ref' => $input->jobRef,
-                'reason' => $e->getMessage(),
+                'exception' => $e,
             ]);
 
             return new JsonResponse(['message' => 'El resultado no se pudo aplicar.'], Response::HTTP_CONFLICT);

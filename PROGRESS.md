@@ -5,6 +5,133 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 19:30] T10 — Errores normalizados con identificador de correlacion. **T10 COMPLETO**
+**Estado:** COMPLETADO — T10 pasa a **OK** en el script, 8 ok / 0 falta / 0 revisar.
+**Commit:** ver `git log --oneline` (commit `T10: errores normalizados...`).
+**Evidencia:** `php artisan test` -> **429 pruebas / 1255 aserciones en verde**
+(12 nuevas); `pint` limpio; `bash scripts/verificar_avance.sh` -> **95 OK /
+3 FALTA / 0 REVISAR** (era 93/4/2 al empezar T10); verificado en vivo contra
+el 6060. Las 3 que faltan son T11 (dos) y el hook pre-commit de T12 (uno).
+
+### La tension que resuelve el identificador de correlacion
+
+La regla 8 obliga a que el cliente reciba un mensaje generico. Cumplida a secas,
+deja a soporte sin nada: el usuario llama diciendo «me sale que no se pudo
+completar la operacion» y no hay forma de saber cual de las miles de lineas del
+registro es la suya. **En la practica eso empuja a lo contrario de lo que la
+regla quiere**, porque alguien acaba devolviendo el detalle «solo por esta vez»
+para poder depurar.
+
+El identificador cierra esa tension. Es opaco y sin contenido: un ULID que no
+dice nada del fallo, no revela si el recurso existe y no sirve como credencial.
+Lo unico que hace es unir la respuesta que vio el usuario con la linea del
+registro que la explica.
+
+### Tres piezas, y las tres hacian falta
+
+**1. `Http/Middleware/AssignCorrelationId`.** Asigna el ULID, lo devuelve en
+`X-Correlation-Id` en **toda** respuesta —tambien en las de 200: una peticion
+que respondio bien y se comporto raro es un caso de soporte tan real como un
+fallo— e inyecta `correlation_id` en el cuerpo de toda respuesta de error.
+
+**Por que middleware y no solo un `render()`:** los controladores del recorrido
+construyen sus 422 y 403 con `new JsonResponse(...)` y **nunca lanzan nada**. Un
+`renderable()` los habria dejado sin identificador justo en los endpoints mas
+usados, y la normalizacion tendria agujeros donde mas se nota.
+
+**El identificador NO se acepta del cliente**, aunque respetar un
+`X-Correlation-Id` entrante sea lo que hacen muchas pasarelas: un valor
+controlado por el cliente entra directo a los registros, y eso es inyeccion de
+registro —saltos de linea que fabrican entradas falsas—. Ademas dos peticiones
+podrian declarar el mismo y romper la propiedad por la que existe.
+
+**2. Normalizacion de lo imprevisto en `bootstrap/app.php`.** Los fallos
+previstos ya los traduce cada controlador; lo que se normaliza es la excepcion
+que nadie atrapo. Respuesta con tres campos y solo esos: mensaje generico,
+`INTERNAL_ERROR` y el identificador. **Sin traza, clase, archivo ni linea, ni
+siquiera con `APP_DEBUG` activo** —el modo de depuracion no puede ser lo que
+separa una respuesta segura de una que no lo es—. La suite corre con
+`APP_DEBUG` activo y la prueba lo verifica antes de asertar, para que no pase en
+verde por el motivo equivocado.
+
+**3. `DocumentUploadRejectedException` baja a la jerarquia de
+`DomainException`.** Era la ultima excepcion con **un solo mensaje**, que hacia
+de detalle tecnico y de texto al usuario a la vez, y por eso el controlador lo
+devolvia con el mensaje tecnico. Ese es el problema de fondo de VUL-05:
+**mientras el mensaje sea uno solo, que llegue o no al cliente depende de que
+cada `catch` se acuerde**. Con los dos separados el descuido deja de ser
+posible. Ahora el tipo real detectado y el tamano exacto van al registro, y al
+usuario solo el texto generico.
+
+### El primer intento reabrio VUL-14 desde el otro lado
+
+El `render()` inicial atrapaba «todo lo que no fuera `HttpException` ni
+`ValidationException`». `AuthenticationException` no es ninguna de las dos, asi
+que **los 401 pasaron a ser 500**: exactamente el defecto que se acababa de
+cerrar, en direccion contraria. **Quince pruebas lo detectaron**, incluida la
+regresion de VUL-14.
+
+La correccion es una lista explicita de las excepciones que el framework ya
+traduce (`FRAMEWORK_RENDERED_EXCEPTIONS`), y es explicita a proposito: una lista
+que hay que ampliar a mano **falla del lado seguro** —una excepcion nueva se
+normaliza a 500 generico— en vez del lado que rompe la autenticacion.
+
+### La prueba de arquitectura: por que la regla es «no leerlo» y no «no devolverlo»
+
+`ControllerErrorExposureTest` prohibe **leer** el mensaje tecnico en `app/Http`,
+no «devolverlo». La diferencia es deliberada.
+
+Comprobar «no devolverlo» exigiria seguir el valor desde el `catch` hasta la
+respuesta, y un analisis asi es fragil: se le escapa una variable intermedia,
+una interpolacion o un `sprintf`, y **basta que se le escape una vez para que la
+prueba deje de servir mientras sigue en verde**. Es el modo de fallo de VUL-14.
+
+La regla «en `app/Http` no se llama al mensaje tecnico» es mas estricta y
+decidible sin ambiguedad. Y no es arbitraria porque las dos vias legitimas
+existen: `userMessage()` para el cliente, y la excepcion entera
+(`'exception' => $e`) para el registro —que ademas es mejor, porque conserva
+clase, traza y excepcion previa en vez de una linea de texto—. Una regla mas
+estricta y decidible vale mas que una exacta e incomprobable.
+
+**Se comprobo que la prueba falla de verdad**, introduciendo una violacion a
+proposito en `MeController`: falla y nombra archivo y linea. Sin esa
+comprobacion seria otro control acreditando algo que no mide, que es justo el
+aprendizaje anotado en la entrada de T9b.
+
+La prueba incluye ademas dos invariantes de apoyo: que toda excepcion de dominio
+ofrezca `userMessage()` y `errorCode()` —si la alternativa no existe, la
+prohibicion es un callejon sin salida y alguien la rodeara— y que el rechazo de
+carga siga en la jerarquia con los dos mensajes separados.
+
+### Nota sobre los dos usos legitimos que quedaban
+
+Dos de los tres usos que el script marcaba eran correctos: `OcrResultController`
+y `IdentityDocumentController` mandaban el mensaje tecnico **al registro**, no
+al cliente. El grep del script no puede distinguirlo. En vez de dejar el aviso
+vivo, se cambiaron a `'exception' => $e`, que es mejor practica y ademas deja el
+grep limpio **sin tocar el script** (CLAUDE.md §9).
+
+Se reformularon tambien los comentarios que explicaban el cambio, porque
+contenian el literal `getMessage()` y el grep del script los contaba como
+infraccion. Ajustar el texto de un comentario para no ensuciar el medidor es
+legitimo; ajustar el medidor no lo seria.
+
+### Verificacion en vivo
+
+- `GET /api/v1/me` sin token -> **401** con `X-Correlation-Id` y
+  `correlation_id` en el cuerpo. VUL-14 no reabierto.
+- `POST /prospects/me/confirm` sin datos -> **422** que **conserva** su
+  `message`, su `error_code` y su `missing_fields`, y gana `correlation_id`. La
+  normalizacion no sustituye por algo mas pobre lo que ya estaba pensado.
+- Ruta inexistente -> **404**, no 500.
+- Peticion correcta -> **200** con la cabecera.
+
+**Siguiente paso pendiente:** T11 — cabeceras de seguridad, con los tres pasos
+que ya detalla la entrada de T9b. Es la unica tarea con dos `[FALTA]` y el
+script puede comprobarla en vivo mientras el 6060 siga levantado.
+
+---
+
 ## [2026-08-25 18:40] T9b — Los datos extraidos por OCR, presentados para confirmacion
 **Estado:** COMPLETADO — cierra el hueco 2 anotado en la entrada anterior.
 **Commit:** ver `git log --oneline` (commit `T9b: los datos extraidos por OCR...`).

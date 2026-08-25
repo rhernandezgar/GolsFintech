@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Storage;
 
 use App\Application\DTO\DocumentUploadInput;
+use App\Domain\Exception\DocumentUploadRejectedException;
 use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
@@ -50,32 +51,33 @@ final readonly class UploadedDocumentStore
         $realPath = $file->getRealPath();
 
         if ($realPath === false || ! is_readable($realPath)) {
-            throw new DocumentUploadRejected('El archivo no se pudo leer.');
+            throw DocumentUploadRejectedException::unreadable();
         }
 
         $sizeBytes = (int) filesize($realPath);
 
         if ($sizeBytes <= 0) {
-            throw new DocumentUploadRejected('El archivo esta vacio.');
+            throw DocumentUploadRejectedException::emptyFile();
         }
 
         if ($sizeBytes > $this->maxSizeBytes) {
-            throw new DocumentUploadRejected('El archivo supera el tamano maximo permitido.');
+            throw DocumentUploadRejectedException::tooLarge($sizeBytes, $this->maxSizeBytes);
         }
 
         // El tipo REAL, no el declarado.
         $detectedMimeType = (string) (new \finfo(FILEINFO_MIME_TYPE))->file($realPath);
 
         if (! array_key_exists($detectedMimeType, self::ALLOWED_MIME_TYPES)) {
-            // El mensaje no dice cual se detecto: no hace falta confirmarle a
-            // quien prueba formatos que su ejecutable se identifico como tal.
-            throw new DocumentUploadRejected('El tipo de archivo no esta permitido.');
+            // El tipo detectado va al detalle tecnico, que solo llega al
+            // registro del servidor: no hace falta confirmarle a quien prueba
+            // formatos que su ejecutable se identifico como tal.
+            throw DocumentUploadRejectedException::disallowedType($detectedMimeType);
         }
 
         $fileHash = hash_file('sha256', $realPath);
 
         if ($fileHash === false) {
-            throw new DocumentUploadRejected('El archivo no se pudo procesar.');
+            throw DocumentUploadRejectedException::couldNotBeStored('no se pudo calcular el hash SHA-256 del contenido');
         }
 
         // Nombre generado. La extension sale del tipo detectado, no del nombre

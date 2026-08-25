@@ -6,11 +6,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Application\UseCase\Identity\UploadIdentityDocument;
 use App\Domain\Audit\AuditContext;
+use App\Domain\Exception\DocumentUploadRejectedException;
 use App\Domain\Exception\ExternalServiceUnavailableException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Identity\UploadIdentityDocumentRequest;
 use App\Infrastructure\Persistence\Eloquent\IdentityDocumentRecord;
-use App\Infrastructure\Storage\DocumentUploadRejected;
 use App\Infrastructure\Storage\UploadedDocumentStore;
 use DateTimeImmutable;
 use Illuminate\Http\JsonResponse;
@@ -59,9 +59,21 @@ final class IdentityDocumentController extends Controller
                 prospectPublicId: $prospect->public_id,
                 documentType: $request->string('document_type')->toString(),
             );
-        } catch (DocumentUploadRejected $e) {
-            // El mensaje ya nace generico en el almacen; no se anade detalle.
-            return new JsonResponse(['message' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (DocumentUploadRejectedException $e) {
+            // Al cliente va `userMessage()`, nunca el mensaje tecnico: el
+            // tipo real detectado y el tamano exacto se quedan en el registro
+            // del servidor. Devolverlos le diria a quien prueba formatos que la
+            // comprobacion mira el contenido y no la extension (regla 8).
+            $this->logger->info('Carga de identificacion rechazada', [
+                'prospect_public_id' => $prospect->public_id,
+                'error_code' => $e->errorCode(),
+                'exception' => $e,
+            ]);
+
+            return new JsonResponse([
+                'message' => $e->userMessage(),
+                'error_code' => $e->errorCode(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
         $context = new AuditContext(actor: $user->email, ipAddress: $request->ip());
@@ -72,9 +84,14 @@ final class IdentityDocumentController extends Controller
             // La cola no acepta trabajos. El archivo ya esta guardado y el
             // prospecto conserva sus datos: se puede reintentar la carga sin
             // volver a capturar nada.
+            // La excepcion viaja entera al registro -mensaje tecnico incluido-
+            // en vez de extraerle el texto: asi el detalle queda donde tiene
+            // que quedar y la capa HTTP no lee el mensaje tecnico en ningun
+            // punto que haya que revisar uno por uno.
             $this->logger->error('No se pudo encolar la extraccion del documento', [
                 'prospect_public_id' => $prospect->public_id,
-                'reason' => $e->getMessage(),
+                'error_code' => $e->errorCode(),
+                'exception' => $e,
             ]);
 
             return new JsonResponse(

@@ -162,7 +162,32 @@ final class TwoFactorLoginTest extends TestCase
         ])->assertStatus(401);
 
         // Distinguirlos permite averiguar que correos estan registrados.
-        $this->assertSame($unknown->json(), $wrongPassword->json());
+        //
+        // Se comparan los cuerpos SIN el identificador de correlacion (T10):
+        // es distinto en cada peticion por diseno, asi que comparar los cuerpos
+        // enteros no probaria nada —diferirian siempre—. Que sea unico no
+        // filtra nada: es opaco y no dice si la cuenta existe.
+        $this->assertSame(
+            $this->bodyWithoutCorrelationId($unknown->json()),
+            $this->bodyWithoutCorrelationId($wrongPassword->json()),
+        );
+
+        // Y aun asi, cada intento es rastreable por separado en el registro.
+        $this->assertNotSame(
+            $unknown->json('correlation_id'),
+            $wrongPassword->json('correlation_id'),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @return array<string, mixed>
+     */
+    private function bodyWithoutCorrelationId(array $body): array
+    {
+        unset($body['correlation_id']);
+
+        return $body;
     }
 
     #[Test]
@@ -173,7 +198,19 @@ final class TwoFactorLoginTest extends TestCase
             'password' => 'lo-que-sea',
         ])->assertStatus(401);
 
-        $this->assertSame(['message' => 'Credenciales invalidas.'], $response->json());
+        // El cuerpo lleva EXACTAMENTE dos claves: el mensaje generico y el
+        // identificador de correlacion (T10). La comparacion sigue siendo
+        // exacta a proposito —no `assertJsonFragment`— para que anadir un
+        // campo nuevo obligue a decidir aqui si ese campo puede viajar.
+        $this->assertSame(
+            ['message', 'correlation_id'],
+            array_keys($response->json()),
+        );
+        $this->assertSame('Credenciales invalidas.', $response->json('message'));
+
+        // El identificador es opaco: no dice nada del fallo ni de la cuenta.
+        $this->assertMatchesRegularExpression('/^[0-9A-HJKMNP-TV-Z]{26}$/', $response->json('correlation_id'));
+        $this->assertStringNotContainsString('nadie@golsfintech.mx', $response->getContent());
     }
 
     // --- Contrasenas --------------------------------------------------------
