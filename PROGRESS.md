@@ -5,6 +5,86 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-25 18:40] T9b — Los datos extraidos por OCR, presentados para confirmacion
+**Estado:** COMPLETADO — cierra el hueco 2 anotado en la entrada anterior.
+**Commit:** ver `git log --oneline` (commit `T9b: los datos extraidos por OCR...`).
+**Evidencia:** `php artisan test` -> **417 pruebas / 1208 aserciones en verde**
+(19 nuevas: 10 unit, 9 feature); `pint` limpio; `npm run build` compila;
+verificado en vivo contra `GET /prospects/me`.
+
+### Por que se cierra en vez de anotarse
+
+El prototipo de la Fase 2 muestra en P3 los datos detectados **con su estado de
+legibilidad**, y la Fase 3 pide que se presenten siempre para confirmacion
+humana porque el OCR puede errar. La version anterior dejaba al prospecto de la
+rama OCR confirmando a ciegas: aceptaba como suyos unos datos que no habia
+podido leer. **Confirmar lo que no se puede revisar no es confirmar**, y una
+extraccion equivocada entraba al expediente sin que nadie la mirara.
+
+### Donde vivian los datos, que no era donde parecia
+
+`RecordOcrOutcome` escribe `ocr_result` sobre `identity_documents` y **no copia
+nada a `prospects`**. Por eso el endpoint lee la ultima extraccion `completed`
+del documento del prospecto, en vez de campos del expediente que nunca se
+rellenaron. Solo se consideran documentos en estado final `completed`: uno en
+proceso no tiene resultado y uno fallido no tiene nada que revisar.
+
+### El enmascarado es PARCIAL, y esa es la decision
+
+`Domain/Identity/ExtractedIdentityData` (nuevo) proyecta la extraccion antes de
+que salga del dominio. **No reutiliza `SensitiveDataMasker`**, y conviene
+entender por que: ese sustituye el dato entero por `[REDACTED]`, que es lo
+correcto en un registro que nadie tiene por que leer y **haria esta pantalla
+inutil** —nadie reconoce `[REDACTED]` como su CURP ni detecta que el OCR ley un
+caracter de mas—.
+
+Lo que hace falta es enmascarado parcial: **bastante para reconocer,
+insuficiente para reconstruir**. Cuatro primeros y dos ultimos para CURP y RFC,
+la misma forma que `Curp::masked()`; solo los cuatro ultimos para el numero de
+documento. La respuesta **nunca transporta la CURP ni el RFC completos**, ni
+siquiera al propio titular (RS-03).
+
+Tres detalles que no son adorno:
+
+- **Cada campo viaja con `masked`.** Sin esa marca, un prospecto podria creer
+  que su CURP se guardo con asteriscos. La vista muestra la etiqueta «parcial».
+- **Las claves sensibles se detectan por subcadena.** El proveedor nombra los
+  campos como quiere: cubrir solo `curp` dejaria pasar `curp_detectada` en
+  claro.
+- **Las estructuras anidadas no se proyectan.** Volcar a ciegas lo que devuelva
+  el proveedor es exactamente la via por la que un dato sensible se escapa sin
+  que nadie lo haya decidido. Fijado por
+  `a_nested_structure_from_the_provider_is_not_projected_blindly`.
+
+- **Un valor demasiado corto para partirlo se oculta entero.** Enmascarar
+  `ABC123` conservando cuatro y dos lo dejaria intacto: peor que no enmascarar,
+  porque parece que si se hizo.
+
+### La legibilidad se decide en el servidor
+
+La confianza del proveedor se traduce a `high` / `medium` / `low` / `unknown`, y
+el endpoint devuelve `needs_careful_review` ya resuelto. **El navegador no
+compara ninguna confianza contra ningun umbral** (RS-04): si manana el umbral
+cambia, cambia en un sitio. Sin confianza declarada el estado es `unknown` y se
+pide revisar igualmente: no se asume que se ley bien.
+
+### Verificacion
+
+Nueve pruebas de feature y diez unitarias. Las de feature comprueban la
+ausencia del dato **recorriendo el cuerpo entero** con
+`assertStringNotContainsString`, no mirando solo el campo que se espera
+enmascarado: si el dato se cuela por otra clave, la prueba falla igual.
+Incluyen aislamiento entre prospectos y los tres casos sin extraccion
+(sin documento, en proceso, fallido).
+
+En vivo, con confianza 0.68: `legibility: low`, `needs_careful_review: true`,
+`curp` -> `HEGG************04`, `rfc` -> `HEGG*******B1`, `document_number` ->
+`********E5F6`, y los tres valores completos ausentes del cuerpo.
+
+**Siguiente paso pendiente:** T10, ya en marcha en esta misma sesion.
+
+---
+
 ## [2026-08-25 15:10] T9b — Las 7 vistas de Vue. **T9 COMPLETO**. T12 (parcial): SAST
 **Estado:** COMPLETADO — T9 pasa a **OK** en el script (era su unico `[FALTA]`).
 T12 sigue **EN PROGRESO**: falta el hook pre-commit con detector de secretos.
@@ -71,6 +151,35 @@ ese calculo reventaba. Incumplia la regla 9 (no contestaba 401) y la 8 (con
 ponen `Accept: application/json`, y con esa cabecera la excepcion se salta el
 calculo. La regresion nueva ejerce el endpoint **sin** la cabecera —con `get()`
 y no `getJson()`, deliberadamente—.
+
+#### Aprendizaje: una prueba que fija la cabecera no ejerce el camino del cliente que no la fija
+
+Es la parte de VUL-14 que hay que retener, porque no es un descuido puntual sino
+un patron que se repite.
+
+Las once comprobaciones de 401 pasaban. La verificacion de T9a del script decia
+`[OK]` sobre ellas. **Y lo que acreditaban era falso:** que el endpoint responde
+401 a quien no se ha autenticado. Respondia 401 solo a quien ademas pedia JSON.
+El helper `getJson()` no es neutral —**fija una cabecera que el cliente real
+puede no enviar**— y al fijarla eligio, sin que nadie lo decidiera, la unica
+rama del codigo que funcionaba. La rama que fallaba no tenia ninguna prueba
+porque ninguna prueba la nombraba.
+
+Un control cuya prueba no ejerce el camino del cliente no es un control: es una
+afirmacion sobre un caso que el atacante no tiene por que elegir. Y es peor que
+no tener prueba, porque el `[OK]` del script desalienta mirar ahi.
+
+**Regla que queda:** cuando una prueba usa un helper que **fija cabeceras,
+formato o negociacion de contenido**, esa prueba cubre el camino con esa
+cabecera y ningun otro. Si el endpoint es alcanzable sin ella —y todo endpoint
+HTTP lo es—, hace falta al menos un caso que la omita. Aplica a `getJson`/
+`postJson` frente a `get`/`post`, y al mismo razonamiento con `Content-Type`,
+`Accept-Language` o cualquier cabecera que cambie de rama.
+
+**Donde mirar despues:** el resto de la suite usa `getJson`/`postJson` casi en
+todas partes. No se ha auditado si algun otro control depende de esa cabecera
+para pasar. No es urgente —VUL-14 era el caso que producia 500, y esta cerrado—
+pero es una revision pendiente y conviene que este dicha.
 
 ### Los dos defectos de flujo que aparecieron al recorrerlo
 
@@ -155,12 +264,9 @@ de las siete pantallas queda pendiente de que el usuario abra
    poder ejercer P7 se admite pegar un token, detras de `import.meta.env.DEV`:
    en una compilacion de produccion ese campo no se genera. **Es un hueco del
    diseno, no de T9b**, y decidirlo es del usuario.
-2. **En la rama OCR, P2 no puede mostrar los datos extraidos.**
-   `GET /prospects/me` devuelve solo `has_data`, nunca datos personales. El
-   formulario aparece vacio a proposito y esta vista no los inventa; como el
-   PATCH solo envia lo que se escriba, confirmar sin tocar nada conserva lo
-   extraido. **Revisar los datos antes de confirmar, como pide P2 del
-   prototipo, exigiria un endpoint que hoy no existe.**
+2. ~~**En la rama OCR, P2 no puede mostrar los datos extraidos.**~~ **CERRADO
+   el 2026-08-25**, ver la entrada de abajo. El usuario decidio que confirmar
+   sin poder revisar contradice el diseno y hay que cerrarlo, no anotarlo.
 
 **Siguiente paso pendiente:** T11 — cabeceras de seguridad. Es la unica tarea
 con dos `[FALTA]` y el script ya puede comprobarla en vivo ahora que el 6060

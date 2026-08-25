@@ -13,6 +13,8 @@ use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
 use App\Domain\Exception\DomainException;
 use App\Domain\Exception\ProspectDataIncompleteException;
+use App\Domain\Identity\ExtractedIdentityData;
+use App\Domain\Identity\OcrStatus;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Prospect\CaptureMethod;
 use App\Domain\Shared\Uuid;
@@ -20,6 +22,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Prospect\CaptureProspectDataRequest;
 use App\Http\Requests\Prospect\ConfirmProspectDataRequest;
 use App\Http\Requests\Prospect\StartProspectCaptureRequest;
+use App\Infrastructure\Persistence\Eloquent\IdentityDocumentRecord;
 use App\Infrastructure\Persistence\Eloquent\ProspectRecord;
 use App\Infrastructure\Security\CaptchaVerifier;
 use App\Infrastructure\Security\ProspectSessionIssuer;
@@ -102,7 +105,26 @@ final class ProspectController extends Controller
         ], Response::HTTP_CREATED);
     }
 
-    /** Estado del propio expediente. La SPA lo usa para saber por que paso va. */
+    /**
+     * Estado del propio expediente, mas lo que el OCR extrajo del documento.
+     *
+     * LOS DATOS EXTRAIDOS VIAJAN PORQUE EL DISENO LOS EXIGE. El prototipo de la
+     * Fase 2 muestra en P3 los datos detectados con su estado de legibilidad, y
+     * la Fase 3 pide que se presenten SIEMPRE para confirmacion humana, porque
+     * el OCR puede errar. Sin ellos, el prospecto de la rama OCR confirma a
+     * ciegas y una extraccion equivocada entra al expediente sin que nadie la
+     * mire.
+     *
+     * Lo que NO viaja es el dato completo cuando es sensible: `ExtractedIdentityData`
+     * enmascara CURP, RFC y numero de documento **antes** de que salgan del
+     * dominio, conservando lo justo para reconocerlos (RS-03). El enmascarado
+     * es parcial y no `[REDACTED]` a proposito: con el dato borrado entero la
+     * pantalla de revision no sirve para revisar nada.
+     *
+     * Los campos del expediente ya capturado siguen sin viajar: para saber por
+     * que paso va el tramite no hace falta ningun dato personal, y `has_data`
+     * lo resuelve.
+     */
     public function show(Request $request): JsonResponse
     {
         $record = $request->user()->prospect;
@@ -111,14 +133,57 @@ final class ProspectController extends Controller
             return new JsonResponse(['message' => 'No hay una solicitud asociada a esta sesion.'], Response::HTTP_NOT_FOUND);
         }
 
-        return new JsonResponse(['data' => [
+        $data = [
             'tracking_id' => $record->public_id,
             'capture_method' => $record->capture_method,
             'capture_status' => $record->capture_status,
-            // Sin CURP ni RFC, ni siquiera enmascarados: para saber por que
-            // paso va el tramite no hace falta ningun dato personal.
             'has_data' => $record->full_name !== null,
-        ]]);
+        ];
+
+        $extraction = $this->latestExtractionFor($record);
+
+        if ($extraction !== null) {
+            $data['ocr_extraction'] = $extraction;
+        }
+
+        return new JsonResponse(['data' => $data]);
+    }
+
+    /**
+     * Ultima extraccion completada del prospecto, ya proyectada y enmascarada.
+     *
+     * Se toma del documento y no de `prospects` porque es ahi donde vive: el
+     * worker escribe `ocr_result` sobre `identity_documents` y no copia nada al
+     * expediente. Solo se consideran documentos en estado final `completed`:
+     * uno en proceso no tiene resultado, y uno fallido no tiene nada que
+     * revisar.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function latestExtractionFor(ProspectRecord $record): ?array
+    {
+        $document = IdentityDocumentRecord::query()
+            ->where('prospect_id', $record->id)
+            ->where('ocr_status', OcrStatus::Completed->value)
+            ->latest('processed_at')
+            ->first();
+
+        if ($document === null) {
+            return null;
+        }
+
+        $extracted = ExtractedIdentityData::fromOcrResult(
+            is_array($document->ocr_result) ? $document->ocr_result : null,
+        );
+
+        if ($extracted === null) {
+            return null;
+        }
+
+        return $extracted->toArray() + [
+            'document_tracking_id' => $document->public_id,
+            'processed_at' => $document->processed_at?->toIso8601String(),
+        ];
     }
 
     /**

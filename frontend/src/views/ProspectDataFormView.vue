@@ -15,16 +15,60 @@ import AlertMessage from '../components/AlertMessage.vue'
  *
  * LAS DOS RAMAS CONVERGEN AQUI. En la rama manual esta es la primera
  * pantalla con datos; en la rama OCR se llega despues de P3 y el expediente
- * ya viene relleno del lado del servidor. En ese caso el formulario aparece
- * vacio a proposito: `GET /prospects/me` NO devuelve los datos personales
- * —solo `has_data`—, y esta pantalla no los inventa. Lo que se envia en el
- * PATCH es solo lo que el prospecto escriba, asi que confirmar sin tocar
- * nada conserva lo que extrajo el OCR y escribir un campo lo corrige.
+ * ya viene relleno del lado del servidor.
+ *
+ * EN LA RAMA OCR SE REVISA ANTES DE CONFIRMAR. El OCR puede errar, y la Fase 3
+ * exige que lo detectado se presente siempre a confirmacion humana: confirmar
+ * lo que no se puede leer no es confirmar. `GET /prospects/me` devuelve lo
+ * extraido en `ocr_extraction`, con su estado de legibilidad, y esta pantalla
+ * lo muestra antes del formulario.
+ *
+ * Lo sensible llega ya enmascarado desde el servidor —CURP y RFC nunca viajan
+ * completos, ni siquiera al titular (RS-03)— y por eso cada campo trae
+ * `masked`: la interfaz avisa de que muestra una parte, para que nadie crea
+ * que su CURP se guardo con asteriscos. El umbral que decide si hay que
+ * insistir en la revision lo fija el servidor en `needs_careful_review`; aqui
+ * no se compara ninguna confianza contra ningun numero (RS-04).
+ *
+ * Corregir es escribir el campo en el formulario. Lo que se deja en blanco no
+ * se envia, asi que confirmar sin tocar nada conserva lo que extrajo el OCR.
  */
 const router = useRouter()
 const flow = useFlowStore()
 const serverHasData = ref(false)
 const cameFromOcr = computed(() => flow.captureMethod === 'ocr')
+
+/** Lo que el OCR extrajo, tal como lo proyecta el servidor. */
+const extraction = ref(null)
+
+/** Etiquetas en espanol de los campos que devuelve el proveedor. */
+const FIELD_LABELS = {
+  full_name: 'Nombre completo',
+  birth_date: 'Fecha de nacimiento',
+  curp: 'CURP',
+  rfc: 'RFC',
+  document_number: 'Numero de documento',
+  sex: 'Sexo',
+  address: 'Domicilio',
+}
+
+const extractedRows = computed(() => {
+  const fields = extraction.value?.fields
+  if (!fields) return []
+  return Object.entries(fields).map(([key, field]) => ({
+    key,
+    label: FIELD_LABELS[key] ?? key,
+    value: field.value,
+    masked: field.masked,
+  }))
+})
+
+const LEGIBILITY_TEXT = {
+  high: 'Se leyo con claridad.',
+  medium: 'Se leyo con alguna dificultad. Revisa con atencion.',
+  low: 'Se leyo con dificultad. Revisa cada dato antes de confirmar.',
+  unknown: 'No pudimos medir la calidad de la lectura. Revisa cada dato.',
+}
 
 const form = reactive({
   full_name: '',
@@ -129,6 +173,9 @@ onMounted(async () => {
   try {
     const { data } = await api.get('/prospects/me')
     serverHasData.value = data.data.has_data === true
+    // Solo viene si hay una extraccion completada. Lo sensible llega ya
+    // enmascarado del servidor; esta vista no enmascara nada por su cuenta.
+    extraction.value = data.data.ocr_extraction ?? null
   } catch {
     // Si el estado no se puede leer, el formulario funciona igual: es
     // informativo, no una precondicion.
@@ -144,7 +191,45 @@ onMounted(async () => {
       que todo este completo.
     </p>
 
-    <AlertMessage v-if="cameFromOcr && serverHasData" variant="info" title="Ya tenemos tus datos">
+    <!-- Revision de lo detectado por el OCR, antes del formulario. El OCR
+         puede errar y lo detectado se presenta siempre para confirmacion
+         humana (Fase 3). -->
+    <section v-if="extraction" class="extraction">
+      <h2>Esto leimos de tu identificacion</h2>
+      <p class="extraction-lead">
+        Revisa cada dato. Si algo no coincide, corrigelo en el formulario de
+        abajo: lo que escribas sustituye a lo detectado.
+      </p>
+
+      <AlertMessage
+        v-if="extraction.needs_careful_review"
+        variant="warning"
+        title="Revisa con atencion"
+      >
+        {{ LEGIBILITY_TEXT[extraction.legibility] ?? LEGIBILITY_TEXT.unknown }}
+      </AlertMessage>
+
+      <dl class="detected">
+        <div v-for="row in extractedRows" :key="row.key" class="row">
+          <dt>{{ row.label }}</dt>
+          <dd>
+            <span class="value">{{ row.value }}</span>
+            <!-- Se avisa de que es una parte del dato, para que nadie crea
+                 que se guardo con asteriscos. -->
+            <span v-if="row.masked" class="partial" title="Por seguridad solo mostramos una parte">
+              parcial
+            </span>
+          </dd>
+        </div>
+      </dl>
+
+      <p class="privacy-note">
+        Por tu seguridad, la CURP, el RFC y el numero de documento se muestran
+        solo en parte. Se guardaron completos y cifrados.
+      </p>
+    </section>
+
+    <AlertMessage v-else-if="cameFromOcr && serverHasData" variant="info" title="Ya tenemos tus datos">
       Los extrajimos de tu identificacion. Escribe un campo solo si quieres
       corregirlo; lo que dejes en blanco se queda como esta. Al confirmar
       comprobaremos que el expediente este completo.
@@ -190,6 +275,26 @@ onMounted(async () => {
 .card { background: #fff; padding: 2rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 h1 { margin-top: 0; color: #0f2c4a; }
 .lead { color: #4b5665; }
+.extraction {
+  border: 1px solid #e2e6ec; border-radius: 6px; padding: 1.25rem;
+  margin: 1.5rem 0; background: #fbfcfd;
+}
+.extraction h2 { margin: 0 0 0.35rem; color: #0f2c4a; font-size: 1.05rem; }
+.extraction-lead { margin: 0 0 1rem; font-size: 0.88rem; color: #4b5665; }
+.detected { margin: 0; border: 1px solid #e2e6ec; border-radius: 4px; overflow: hidden; background: #fff; }
+.detected .row {
+  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
+  padding: 0.6rem 0.9rem; border-bottom: 1px solid #eef1f5;
+}
+.detected .row:last-child { border-bottom: 0; }
+.detected dt { margin: 0; color: #4b5665; font-size: 0.85rem; }
+.detected dd { margin: 0; display: inline-flex; align-items: baseline; gap: 0.5rem; }
+.detected .value { font-weight: 600; color: #1f2833; font-variant-numeric: tabular-nums; }
+.partial {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+  background: #dfe5ee; color: #4b5665; padding: 0.05rem 0.35rem; border-radius: 3px; cursor: help;
+}
+.privacy-note { font-size: 0.78rem; color: #6b7686; margin: 0.75rem 0 0; }
 .optional { margin: 0.5rem 0 1.5rem; }
 .optional summary { cursor: pointer; padding: 0.5rem 0; font-weight: 500; color: #0f2c4a; }
 .actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem; }
