@@ -8,12 +8,17 @@ use App\Application\DTO\ProspectDataPatch;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
-use App\Domain\Exception\InvalidCurpException;
+use App\Domain\Exception\ProspectAlreadyCustomerException;
+use App\Domain\Exception\ProspectApplicationInProgressException;
+use App\Domain\Exception\ProspectRetryLimitReachedException;
 use App\Domain\Identity\Curp;
 use App\Domain\Identity\Rfc;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Prospect\ApplicationSnapshot;
 use App\Domain\Prospect\Prospect;
+use App\Domain\Prospect\ReapplicationOutcome;
+use App\Domain\Prospect\ReapplicationPolicy;
 use App\Domain\Prospect\Sex;
 use App\Domain\Shared\Email;
 use App\Domain\Shared\Money;
@@ -45,6 +50,7 @@ final readonly class UpdateProspectDraft
     public function __construct(
         private ProspectRepository $prospects,
         private AuditLogger $auditLogger,
+        private ReapplicationPolicy $reapplication,
     ) {}
 
     public function execute(
@@ -62,14 +68,7 @@ final readonly class UpdateProspectDraft
         $curp = $this->blankToNull($patch->curp) === null ? null : Curp::fromString((string) $patch->curp);
 
         if ($curp !== null) {
-            $existing = $this->prospects->findByCurp($curp);
-
-            if ($existing !== null && ! $existing->publicId()->equals($prospect->publicId())) {
-                // Duplicidad de CURP en otro expediente: se corta con el mismo
-                // criterio que `CaptureProspectData`, y el detalle queda del
-                // lado del servidor.
-                throw new InvalidCurpException('La CURP ya esta registrada en otra solicitud.');
-            }
+            $this->assertCurpCanApply($curp, $prospect, $context, $now);
         }
 
         $rfc = $this->blankToNull($patch->rfc) === null ? null : Rfc::fromString((string) $patch->rfc);
@@ -148,5 +147,83 @@ final readonly class UpdateProspectDraft
         }
 
         return $present;
+    }
+
+    /**
+     * Aplica la politica de reintento sobre la CURP capturada (VUL-17).
+     *
+     * Antes esto era un `existsWithCurp` que lanzaba `InvalidCurpException`, y
+     * tenia dos problemas encadenados: le decia «tu CURP no es valida» a alguien
+     * cuya CURP era perfectamente valida, y convertia cualquier intento fallido
+     * en un veto permanente. Ahora la regla es «una CURP, una solicitud ACTIVA
+     * a la vez» y cada desenlace tiene su excepcion y su mensaje.
+     *
+     * El expediente PROPIO nunca estorba: se compara por identificador publico
+     * antes de nada, porque reescribir la misma CURP en el mismo expediente es
+     * lo que hace cualquiera que corrige una letra.
+     */
+    private function assertCurpCanApply(
+        Curp $curp,
+        Prospect $prospect,
+        AuditContext $context,
+        DateTimeImmutable $now,
+    ): void {
+        $existing = $this->prospects->findApplicationByCurp($curp);
+
+        if ($existing === null || $existing->prospectPublicId->equals($prospect->publicId())) {
+            return;
+        }
+
+        $decision = $this->reapplication->decide($existing, $now);
+
+        match ($decision->outcome) {
+            ReapplicationOutcome::BlockAlreadyCustomer => throw new ProspectAlreadyCustomerException,
+            ReapplicationOutcome::BlockInProgress => throw new ProspectApplicationInProgressException(
+                (int) $decision->retryAfterMinutes
+            ),
+            ReapplicationOutcome::BlockRetryLimit => throw new ProspectRetryLimitReachedException(
+                (int) $decision->retryAfterMinutes
+            ),
+            ReapplicationOutcome::AbandonPreviousThenAllow => $this->abandonPrevious($existing, $context, $now),
+            ReapplicationOutcome::Allow => null,
+        };
+    }
+
+    /**
+     * Cierra el expediente caducado y lo deja registrado.
+     *
+     * El evento NO es opcional: sin el, un expediente con datos personales
+     * cambia de estado sin que nadie pueda acreditar cuando ni por que, y la
+     * retencion acotada que pide RS-09 (LFPDPPP, finalidad y proporcionalidad)
+     * deja de ser demostrable.
+     */
+    private function abandonPrevious(
+        ApplicationSnapshot $existing,
+        AuditContext $context,
+        DateTimeImmutable $now,
+    ): void {
+        $previous = $this->prospects->findByPublicId($existing->prospectPublicId);
+
+        if ($previous === null) {
+            return;
+        }
+
+        $previous->abandon();
+        $this->prospects->save($previous);
+
+        $this->auditLogger->append(new AuditEvent(
+            eventType: AuditEventType::ProspectAbandoned,
+            affectedEntity: 'Prospect',
+            affectedEntityId: $previous->id(),
+            prospectId: $previous->id(),
+            context: $context,
+            eventAt: $now,
+            // Sin CURP: el motivo y la antiguedad bastan para auditar la
+            // caducidad, y el dato personal no aporta nada aqui (regla 1).
+            metadata: [
+                'reason' => 'in_progress_window_expired',
+                'last_activity_at' => $existing->lastActivityAt->format(DateTimeImmutable::ATOM),
+            ],
+        ));
     }
 }

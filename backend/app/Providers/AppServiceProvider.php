@@ -13,6 +13,7 @@ use App\Domain\Port\AuditLogger;
 use App\Domain\Port\CreditApplicationRepository;
 use App\Domain\Port\IdentityValidationRepository;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Prospect\ReapplicationPolicy;
 use App\Infrastructure\Security\PiiHasher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
@@ -54,6 +55,20 @@ final class AppServiceProvider extends ServiceProvider
             auditLogger: $app->make(AuditLogger::class),
             simulationTtlSeconds: (int) $app['config']->get('credit.simulation_ttl_seconds', 1800),
         ));
+
+        // Misma razon: la politica de reintento recibe tres enteros que salen
+        // de configuracion. Es un singleton porque no tiene estado y los dos
+        // casos de uso que la consumen tienen que decidir con las MISMAS
+        // ventanas: si cada uno construyera la suya, la rama manual y la de OCR
+        // podrian divergir sin que nada lo delatara.
+        $this->app->singleton(
+            ReapplicationPolicy::class,
+            static fn (Application $app): ReapplicationPolicy => new ReapplicationPolicy(
+                inProgressWindowMinutes: (int) $app['config']->get('security.reapplication.in_progress_window_minutes', 10),
+                rejectedWindowHours: (int) $app['config']->get('security.reapplication.rejected_window_hours', 24),
+                maxRejectedAttempts: (int) $app['config']->get('security.reapplication.max_rejected_attempts', 3),
+            )
+        );
     }
 
     public function boot(): void

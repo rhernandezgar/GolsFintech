@@ -6,6 +6,8 @@ namespace Tests\Support\Doubles;
 
 use App\Domain\Identity\Curp;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Prospect\ApplicationSnapshot;
+use App\Domain\Prospect\CaptureStatus;
 use App\Domain\Prospect\Prospect;
 use App\Domain\Shared\Uuid;
 
@@ -50,15 +52,63 @@ final class InMemoryProspectRepository implements ProspectRepository
         return null;
     }
 
+    /**
+     * Mismo criterio que el adaptador de Eloquent: la ACTIVA tiene prioridad.
+     *
+     * Desde VUL-17 puede haber varias con la misma CURP —una viva y las
+     * abandonadas— y devolver cualquiera haria que el doble y la base
+     * respondieran distinto, que es la peor propiedad que puede tener un doble:
+     * la prueba pasaria y la aplicacion fallaria.
+     */
     public function findByCurp(Curp $curp): ?Prospect
     {
+        $abandoned = null;
+
         foreach ($this->prospects as $prospect) {
-            if ($prospect->curp()?->value === $curp->value) {
+            if ($prospect->curp()?->value !== $curp->value) {
+                continue;
+            }
+
+            if ($prospect->captureStatus() !== CaptureStatus::Abandoned) {
                 return $prospect;
             }
+
+            $abandoned = $prospect;
         }
 
-        return null;
+        return $abandoned;
+    }
+
+    /**
+     * Datos que el doble no puede deducir de un `Prospect` en memoria: si la
+     * CURP llego a ser cliente y cuando se la rechazo. Se inyectan desde la
+     * prueba, indexados por CURP.
+     *
+     * @var array<string, bool>
+     */
+    public array $customersByCurp = [];
+
+    /** @var array<string, list<\DateTimeImmutable>> */
+    public array $rejectedValidationsByCurp = [];
+
+    /** Ultima actividad simulada, indexada por CURP. */
+    public array $lastActivityByCurp = [];
+
+    public function findApplicationByCurp(Curp $curp): ?ApplicationSnapshot
+    {
+        $prospect = $this->findByCurp($curp);
+
+        if ($prospect === null) {
+            return null;
+        }
+
+        return new ApplicationSnapshot(
+            prospectPublicId: $prospect->publicId(),
+            captureStatus: $prospect->captureStatus(),
+            lastActivityAt: $this->lastActivityByCurp[$curp->value] ?? new \DateTimeImmutable,
+            belongsToCustomer: $this->customersByCurp[$curp->value] ?? false,
+            rejectedValidationsAt: $this->rejectedValidationsByCurp[$curp->value] ?? [],
+        );
     }
 
     public function existsWithCurp(Curp $curp): bool

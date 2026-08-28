@@ -5,6 +5,121 @@ Regla: una tarea no está terminada si no está commiteada.
 
 ---
 
+## [2026-08-28 22:30] VUL-17 — «Una CURP, una solicitud ACTIVA a la vez»
+**Estado:** COMPLETADO — defecto de diseno corregido en dominio, esquema e
+interfaz. Ademas, el encimado del titulo en todas las vistas.
+**Commit:** ver `git log --oneline` (commit `T9b: una CURP, una solicitud...`).
+**Evidencia:** `php artisan test` -> **503 pruebas / 1531 aserciones en verde,
+0 avisos** (46 nuevas); `pint` limpio; `npm run build` compila;
+`bash scripts/verificar_avance.sh` -> **102 OK / 0 FALTA**.
+
+### No era una regresion, y la busqueda del culpable lo demostro
+
+El usuario reportaba que `HEGR791216HTCRRG09` —CURP valida, digito 9
+correcto— era rechazada, y sospechaba que la habia roto VUL-16, el
+`TransactionManager` o el no-op de `markDocumentUploaded`.
+
+**Ninguna de las tres.** Se cargo `Curp.php` de **cada uno de los 14 commits**
+de la sesion y se ejercito el vector: **ACEPTA en los catorce**. Y
+`git log 0d37beb^..HEAD` devuelve **0 commits** para `Curp.php`,
+`InvalidCurpException.php`, `UpdateProspectDraft.php` y
+`CaptureProspectDataRequest.php`. No habia commit culpable porque no habia
+regresion.
+
+La CURP estaba **ya registrada**: `prospects` id=9, de la propia reproduccion de
+VUL-15 del usuario. El control de unicidad hacia exactamente lo que decia hacer.
+
+### Pero habia dos defectos reales, y el segundo es de diseno
+
+**(a) El mensaje.** `InvalidCurpException` servia dos situaciones distintas
+—CURP malformada y CURP ya registrada— con un unico texto: «La CURP capturada
+no es valida. Revisala». A alguien con la CURP correcta se le pedia revisarla;
+la revisaba, veia que estaba bien, la reescribia y recibia lo mismo. Callejon
+sin salida y perdida de conversion sin causa visible.
+
+**Y conflar el mensaje no compraba nada en seguridad.** El oraculo de
+enumeracion no es el texto sino el CODIGO DE ESTADO: una CURP libre responde 200
+y una registrada 422. La genericidad solo perjudicaba al usuario legitimo. Queda
+anotado como riesgo residual en `SECURITY_CHECKLIST.md`, con las dos
+alternativas descartadas y por que.
+
+**(b) El modelo.** El UNIQUE sobre `curp_hash` imponia «una CURP, una
+solicitud», de modo que quien abandonaba a mitad del formulario o recibia un
+rechazo de identidad **no podia volver a solicitar nunca**. La Fase 1 contempla
+el rechazo por identidad no verificada como desenlace normal, no como expulsion.
+
+### Lo implementado
+
+`Domain/Prospect/ReapplicationPolicy` con cinco desenlaces: permitir, abandonar
+la caducada y permitir, bloquear por solicitud viva (**con minutos reales
+calculados**, no un «intentalo mas tarde»), bloquear por cliente ya registrado y
+bloquear por limite de rechazos. Tres excepciones propias con `error_code`
+distinto y mensaje accionable.
+
+**El limite de rechazos no es opcional.** Sin el, P4 se convierte en un oraculo
+de fuerza bruta contra INE y RENAPO: con la CURP como unica entrada se pueden
+sondear combinaciones hasta que una valide, usando nuestro convenio como
+servicio de verificacion gratuito (R-01, R-05). Su ventana es de HORAS, frente a
+los 10 minutos de la expiracion, porque miden cosas distintas: una acota
+intentos contra un tercero, la otra solo libera un formulario abandonado.
+
+Cada abandono por caducidad emite `prospect.abandoned` con su motivo y **sin
+CURP** en el metadato. Conecta con RS-09 (LFPDPPP, finalidad y
+proporcionalidad): un expediente abandonado no se conserva indefinidamente con
+datos personales, y marcarlo es el primer paso de esa retencion acotada.
+
+**La restriccion baja al esquema**, que es donde vivia la regla vieja: `curp_hash`
+pierde el UNIQUE y gana indice de busqueda, y una columna **generada**
+`active_curp_hash` —NULL cuando el estado es `abandoned`— lleva el UNIQUE. MySQL
+considera cada NULL distinto, asi que conviven todas las abandonadas y a lo sumo
+una viva. Generada y no mantenida por la aplicacion a proposito: una columna a
+mano se desincroniza **en silencio** el dia que un camino olvide actualizarla.
+
+### Un fallo propio que encontro mi propia prueba
+
+Con varias filas por CURP, `findByCurp` hacia `first()` y devolvia la de menor
+id —normalmente una **abandonada**—. La politica concluia que no habia nada que
+estorbara, dejaba pasar la captura y el INSERT chocaba contra el indice: 500. El
+sintoma era el mismo de antes; la causa, mirar el expediente equivocado. Se
+corrigio en el adaptador **y en el doble en memoria**: que los dos ordenen igual
+importa, porque un doble que responde distinto de la base es la peor propiedad
+que puede tener —la prueba pasa y la aplicacion falla—.
+
+### El encimado del titulo afectaba a SEIS vistas, no a una
+
+`:root` declaraba `font: 18px/145%`. Un `line-height` en **porcentaje** se
+computa una sola vez —145% de 18px = 26.1px— y lo que heredan los descendientes
+es ese valor ya resuelto, no la proporcion. El `h1` de 56px heredaba 26.1px de
+interlineado, menos de la mitad de su tamano.
+
+No era solo P1: **seis de las siete vistas** usan el `h1` global.
+`AuthorizationConfirmedView` se salvo por casualidad, porque fija su propio
+`font-size: 1.45rem`. WelcomeView era donde se veia porque es el unico titulo
+largo suficiente para partirse en dos lineas.
+
+Corregido en la raiz con interlineado **sin unidad** (`18px/1.45`), mas
+`line-height` propio en `h1` y `h2`. No queda ningun `line-height` en porcentaje
+en `frontend/src`.
+
+### CurpTest tenia 4 vectores de la misma familia
+
+Los cuatro eran variaciones de `HEGG5604…`: misma entidad, mismo sexo, misma
+forma de homoclave. Con una sola familia, cualquier defecto sensible a la
+entidad federativa, al sexo o a la homoclave alfabetica pasaria entero.
+
+Ahora hay **siete vectores variados** —Tlaxcala, CDMX, Veracruz, nacido en el
+extranjero con prefijo XEXX y entidad NE, hombres y mujeres, homoclave numerica
+y alfabetica— recorridos por tres pruebas cada uno: aceptacion con su digito,
+enmascarado que no filtra el valor completo, y rechazo al alterar el digito.
+`HEGR791216HTCRRG09` queda fijo aunque el defecto no estuviera en `Curp`: fue la
+cadena con la que se demostro que el validador no era el culpable.
+
+**Siguiente paso pendiente:** terminar el recorrido visual (P4 a P7 en el
+navegador). El expediente id=9 **no se borro** —tiene bitacora encadenada— y
+queda desbloqueado solo al expirar su ventana.
+
+---
+
 ## [2026-08-25 22:10] VUL-15 y VUL-16 — El recorrido visual encuentra lo que 443 pruebas no vieron
 **Estado:** COMPLETADO — dos defectos corregidos, ambos introducidos por el
 asistente, ambos con regresion fijada.

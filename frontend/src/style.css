@@ -15,7 +15,21 @@
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
-  font: 18px/145% var(--sans);
+  /*
+   * Interlineado SIN unidad, y esto no es una preferencia de estilo.
+   *
+   * Antes era `18px/145%`. Un `line-height` en porcentaje se computa UNA vez,
+   * contra el tamano de fuente donde se declara —145% de 18px = 26.1px— y lo
+   * que heredan los descendientes es ese valor ya resuelto, no la proporcion.
+   * El `h1` de 56px heredaba 26.1px de interlineado: menos de la mitad de su
+   * propio tamano, asi que en cuanto un titulo ocupaba dos lineas se encimaba
+   * consigo mismo.
+   *
+   * Sin unidad se hereda la PROPORCION y cada elemento la resuelve contra su
+   * propio tamano. Es la razon por la que 1.45 y 145% no son equivalentes en
+   * una cascada, aunque lo parezcan en el elemento donde se escriben.
+   */
+  font: 18px/1.45 var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
   color: var(--text);
@@ -63,6 +77,9 @@ h2 {
 
 h1 {
   font-size: 56px;
+  /* Propio y ajustado: un titular grande necesita menos aire proporcional que
+     un parrafo, y dejarlo al 1.45 heredado lo separaria de mas. */
+  line-height: 1.1;
   letter-spacing: -1.68px;
   margin: 32px 0;
   @media (max-width: 1024px) {
@@ -72,7 +89,9 @@ h1 {
 }
 h2 {
   font-size: 24px;
-  line-height: 118%;
+  /* Sin unidad por el mismo motivo que en :root: en porcentaje, lo que
+     heredarian los hijos de un h2 seria 28.3px fijos. */
+  line-height: 1.18;
   letter-spacing: -0.24px;
   margin: 0 0 8px;
   @media (max-width: 1024px) {
@@ -93,7 +112,7 @@ code,
 
 code {
   font-size: 15px;
-  line-height: 135%;
+  line-height: 1.35;
   padding: 4px 8px;
   background: var(--code-bg);
 }

@@ -8,12 +8,17 @@ use App\Application\DTO\ProspectDataInput;
 use App\Domain\Audit\AuditContext;
 use App\Domain\Audit\AuditEvent;
 use App\Domain\Audit\AuditEventType;
-use App\Domain\Exception\InvalidCurpException;
+use App\Domain\Exception\ProspectAlreadyCustomerException;
+use App\Domain\Exception\ProspectApplicationInProgressException;
+use App\Domain\Exception\ProspectRetryLimitReachedException;
 use App\Domain\Identity\Curp;
 use App\Domain\Identity\Rfc;
 use App\Domain\Port\AuditLogger;
 use App\Domain\Port\ProspectRepository;
+use App\Domain\Prospect\ApplicationSnapshot;
 use App\Domain\Prospect\Prospect;
+use App\Domain\Prospect\ReapplicationOutcome;
+use App\Domain\Prospect\ReapplicationPolicy;
 use App\Domain\Prospect\Sex;
 use App\Domain\Shared\Email;
 use App\Domain\Shared\Money;
@@ -34,6 +39,7 @@ final readonly class CaptureProspectData
     public function __construct(
         private ProspectRepository $prospects,
         private AuditLogger $auditLogger,
+        private ReapplicationPolicy $reapplication,
     ) {}
 
     public function execute(
@@ -50,13 +56,11 @@ final readonly class CaptureProspectData
 
         $curp = Curp::fromString($input->curp);
 
-        // Una CURP ya registrada por otro prospecto no es un duplicado inocente: se
-        // corta aqui y el detalle queda del lado del servidor.
-        $existing = $this->prospects->findByCurp($curp);
-
-        if ($existing !== null && ! $existing->publicId()->equals($prospect->publicId())) {
-            throw new InvalidCurpException('La CURP ya esta registrada en otra solicitud.');
-        }
+        // Misma politica que en la captura parcial: «una CURP, una solicitud
+        // ACTIVA a la vez», no «una CURP, una solicitud» (VUL-17). Las dos
+        // ramas del recorrido tienen que decidir igual, o el usuario obtendria
+        // una respuesta distinta segun por donde entro.
+        $this->assertCurpCanApply($curp, $prospect, $context, $now);
 
         $prospect->captureData(
             fullName: $input->fullName,
@@ -91,5 +95,65 @@ final readonly class CaptureProspectData
         ));
 
         return $prospect;
+    }
+
+    /**
+     * Politica de reintento por CURP (VUL-17). Gemela de la de
+     * `UpdateProspectDraft`: las dos ramas del recorrido deciden igual.
+     */
+    private function assertCurpCanApply(
+        Curp $curp,
+        Prospect $prospect,
+        AuditContext $context,
+        DateTimeImmutable $now,
+    ): void {
+        $existing = $this->prospects->findApplicationByCurp($curp);
+
+        if ($existing === null || $existing->prospectPublicId->equals($prospect->publicId())) {
+            return;
+        }
+
+        $decision = $this->reapplication->decide($existing, $now);
+
+        match ($decision->outcome) {
+            ReapplicationOutcome::BlockAlreadyCustomer => throw new ProspectAlreadyCustomerException,
+            ReapplicationOutcome::BlockInProgress => throw new ProspectApplicationInProgressException(
+                (int) $decision->retryAfterMinutes
+            ),
+            ReapplicationOutcome::BlockRetryLimit => throw new ProspectRetryLimitReachedException(
+                (int) $decision->retryAfterMinutes
+            ),
+            ReapplicationOutcome::AbandonPreviousThenAllow => $this->abandonPrevious($existing, $context, $now),
+            ReapplicationOutcome::Allow => null,
+        };
+    }
+
+    /** Cierra el expediente caducado y lo registra (RS-09). */
+    private function abandonPrevious(
+        ApplicationSnapshot $existing,
+        AuditContext $context,
+        DateTimeImmutable $now,
+    ): void {
+        $previous = $this->prospects->findByPublicId($existing->prospectPublicId);
+
+        if ($previous === null) {
+            return;
+        }
+
+        $previous->abandon();
+        $this->prospects->save($previous);
+
+        $this->auditLogger->append(new AuditEvent(
+            eventType: AuditEventType::ProspectAbandoned,
+            affectedEntity: 'Prospect',
+            affectedEntityId: $previous->id(),
+            prospectId: $previous->id(),
+            context: $context,
+            eventAt: $now,
+            metadata: [
+                'reason' => 'in_progress_window_expired',
+                'last_activity_at' => $existing->lastActivityAt->format(DateTimeImmutable::ATOM),
+            ],
+        ));
     }
 }

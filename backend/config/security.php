@@ -153,6 +153,42 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | Reintento de solicitud por CURP (VUL-17)
+    |---------------------------------------------------------------------------
+    |
+    | La restriccion NO es «una CURP, una solicitud» sino «una CURP, una
+    | solicitud ACTIVA a la vez». La primera convierte cualquier intento fallido
+    | en un veto permanente: quien abandona a mitad del formulario, o a quien el
+    | proveedor de identidad no le confirma los datos una vez, no podria volver a
+    | solicitar nunca. La Fase 1 contempla el rechazo por identidad no verificada
+    | como un desenlace normal, no como una expulsion.
+    |
+    | Las dos ventanas miden cosas distintas y por eso son de ordenes distintos:
+    |
+    |   - `in_progress_window_minutes` libera un FORMULARIO abandonado. Corta,
+    |     porque su unico efecto es no dejar fuera a quien de verdad quiere
+    |     solicitar. Diez minutos cubren de sobra el tramite, que la Fase 1
+    |     estima en menos de cinco (RNF-02).
+    |   - `rejected_window_hours` acota los INTENTOS CONTRA UN TERCERO. Larga,
+    |     porque lo que limita es el sondeo de INE y RENAPO: sin limite, P4 se
+    |     convierte en un oraculo de fuerza bruta con la CURP como unica entrada
+    |     (riesgos R-01 y R-05).
+    |
+    | La expiracion conecta ademas con RS-09 (LFPDPPP, finalidad y
+    | proporcionalidad): un expediente abandonado no debe conservarse
+    | indefinidamente con datos personales, y marcarlo como abandonado es el
+    | primer paso de esa retencion acotada.
+    |
+    */
+
+    'reapplication' => [
+        'in_progress_window_minutes' => (int) env('REAPPLICATION_WINDOW_MINUTES', 10),
+        'rejected_window_hours' => (int) env('REAPPLICATION_REJECTED_WINDOW_HOURS', 24),
+        'max_rejected_attempts' => (int) env('REAPPLICATION_MAX_REJECTED_ATTEMPTS', 3),
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
     | Cabeceras de seguridad (T11, VUL-08)
     |---------------------------------------------------------------------------
     |

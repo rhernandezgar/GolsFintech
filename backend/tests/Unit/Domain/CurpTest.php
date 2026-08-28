@@ -6,6 +6,7 @@ namespace Tests\Unit\Domain;
 
 use App\Domain\Exception\InvalidCurpException;
 use App\Domain\Identity\Curp;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -80,5 +81,75 @@ final class CurpTest extends TestCase
 
         $this->assertStringNotContainsString('560427', $masked);
         $this->assertSame(18, strlen($masked));
+    }
+
+    // ====================== vectores fijos de CURP validas ==================
+
+    /**
+     * Vectores reales y variados, anadidos tras VUL-17.
+     *
+     * Hasta entonces este archivo tenia CUATRO vectores y los cuatro eran
+     * variaciones del mismo caso —`HEGG5604…`, la misma entidad, el mismo sexo,
+     * la misma forma de homoclave—. Con una sola familia, la bateria acredita
+     * mucho menos de lo que parece: cualquier defecto sensible a la entidad
+     * federativa, al sexo o a la homoclave alfabetica de los nacidos a partir
+     * del 2000 pasaria entero.
+     *
+     * `HEGR791216HTCRRG09` es el vector que reporto el usuario. Queda fijo
+     * aunque el defecto de VUL-17 no estuviera en `Curp`: fue la cadena con la
+     * que se demostro que el validador NO era el culpable, y conviene que siga
+     * demostrandolo si alguien toca el algoritmo.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function validCurps(): array
+    {
+        return [
+            // El vector de VUL-17: Tlaxcala, hombre, homoclave numerica.
+            'HEGR — Tlaxcala, hombre, nacido antes del 2000' => ['HEGR791216HTCRRG09'],
+            // Distrito Federal, mujer, homoclave alfabetica (nacida tras 2000).
+            'PELA — CDMX, mujer, homoclave alfabetica' => ['PELA920323MDFRPNL4'],
+            'MAAL — CDMX, hombre, homoclave alfabetica' => ['MAAL880712HDFRPNC4'],
+            'ROMA — CDMX, hombre, homoclave alfabetica' => ['ROMA910517HDFDRNB7'],
+            'LOPE — CDMX, mujer, homoclave alfabetica' => ['LOPE880322MDFPRZC3'],
+            // Nacido en el extranjero: prefijo XEXX y entidad NE.
+            'XEXX — nacido en el extranjero, entidad NE' => ['XEXX010101HNEXXXA4'],
+            // Los que ya habia, conservados: ninguna entrada se pierde.
+            'HEGG — Veracruz, mujer (vector historico)' => ['HEGG560427MVZRRL04'],
+        ];
+    }
+
+    #[DataProvider('validCurps')]
+    public function test_a_valid_curp_is_accepted(string $value): void
+    {
+        $curp = Curp::fromString($value);
+
+        $this->assertSame($value, $curp->value);
+        // El digito verificador que calcula el algoritmo es el que trae.
+        $this->assertSame($value[17], Curp::checkDigit($value));
+    }
+
+    #[DataProvider('validCurps')]
+    public function test_a_valid_curp_never_travels_complete_when_masked(string $value): void
+    {
+        // Regla 1 sobre cada vector, no solo sobre uno: el enmascarado tiene que
+        // sostenerse para todas las formas, no para la familia que se probo.
+        $masked = Curp::fromString($value)->masked();
+
+        $this->assertNotSame($value, $masked);
+        $this->assertStringNotContainsString($value, $masked);
+        $this->assertStringStartsWith(substr($value, 0, 4), $masked);
+    }
+
+    #[DataProvider('validCurps')]
+    public function test_flipping_the_check_digit_is_always_rejected(string $value): void
+    {
+        // Regresion del propio algoritmo: si dejara de comprobar el digito,
+        // estas siete pasarian a aceptarse y ninguna otra prueba lo notaria.
+        $wrongDigit = (string) (((int) $value[17] + 1) % 10);
+        $broken = substr($value, 0, 17).$wrongDigit;
+
+        $this->expectException(InvalidCurpException::class);
+        Curp::fromString($broken);
     }
 }

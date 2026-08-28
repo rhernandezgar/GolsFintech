@@ -14,6 +14,7 @@ use App\Domain\Audit\AuditContext;
 use App\Domain\Exception\IdentityNotVerifiedException;
 use App\Domain\Exception\InvalidCurpException;
 use App\Domain\Exception\InvalidStateTransitionException;
+use App\Domain\Exception\ProspectApplicationInProgressException;
 use App\Domain\Exception\UnauthorizedTermException;
 use App\Domain\Identity\DocumentType;
 use App\Domain\Identity\IdentityDocument;
@@ -144,13 +145,26 @@ final class ProspectJourneyTest extends TestCase
         $this->assertStringContainsString('manual', $metadata);
     }
 
-    public function test_a_second_prospect_cannot_reuse_a_registered_curp(): void
+    public function test_a_second_prospect_cannot_reuse_a_curp_with_a_live_application(): void
     {
         $this->startAndCapture();
 
-        $this->expectException(InvalidCurpException::class);
-
-        $this->startAndCapture();
+        // La excepcion es especifica, no `InvalidCurpException` (VUL-17). La
+        // version anterior de esta prueba afirmaba la clase generica, que es la
+        // MISMA que se lanza cuando la CURP esta malformada: con esa asercion,
+        // la prueba pasaba tanto si el sistema decia «tienes una solicitud en
+        // curso» como si le decia «tu CURP no es valida» a alguien cuya CURP
+        // era correcta. Era demasiado gruesa para ver la diferencia que importa.
+        try {
+            $this->startAndCapture();
+            $this->fail('Se esperaba que la segunda solicitud fuera rechazada.');
+        } catch (ProspectApplicationInProgressException $e) {
+            $this->assertSame('PROSPECT_APPLICATION_IN_PROGRESS', $e->errorCode());
+            // El mensaje lleva minutos reales y NO dice que la CURP sea invalida.
+            $this->assertGreaterThan(0, $e->retryAfterMinutes());
+            $this->assertStringNotContainsString('no es valida', $e->userMessage());
+            $this->assertStringContainsString((string) $e->retryAfterMinutes(), $e->userMessage());
+        }
     }
 
     public function test_the_simulation_requires_confirmed_data(): void
